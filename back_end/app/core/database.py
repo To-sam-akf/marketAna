@@ -9,12 +9,11 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from back_end.app.core.config import get_settings
 from back_end.app.core.exceptions import AppException, ErrorCode
 
-# 提供/home/sanmu/marketANA/plan_details/p1_init.md
+# 提供ORM基类
 class Base(DeclarativeBase):
     pass
 
 # 创建引擎（Engine） — 管理连接池
-
 def build_engine(database_url: str | None) -> Engine | None:
     if not database_url:
         return None
@@ -52,6 +51,14 @@ def get_engine() -> Engine:
             message="Database URL is not configured",
         )
     return engine
+
+
+def create_database_tables(engine: Engine | None = None) -> None:
+    # Import models so SQLAlchemy registers table metadata before create_all.
+    import back_end.app.models  # noqa: F401
+
+    resolved_engine = engine or get_engine()
+    Base.metadata.create_all(bind=resolved_engine)
 
 
 def get_session() -> Generator[Session, None, None]:

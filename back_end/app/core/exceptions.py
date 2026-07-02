@@ -10,6 +10,7 @@ class ErrorCode(IntEnum):
     OK = 0                        # 成功
     INTERNAL_ERROR = 10000         # 未预期的服务器内部错误
     VALIDATION_ERROR = 10001       # 请求参数校验失败
+    NOT_FOUND = 10002              # 资源不存在
     DATABASE_UNCONFIGURED = 20001  # 数据库未配置
     DATABASE_ERROR = 20002         # 数据库操作出错
     LLM_UNCONFIGURED = 30001       # 大模型未配置

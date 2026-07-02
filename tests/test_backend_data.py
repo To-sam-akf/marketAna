@@ -1,0 +1,218 @@
+from datetime import datetime
+
+import pytest
+from sqlalchemy import create_engine, inspect, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from back_end.app.api.articles import get_article_detail, list_articles
+from back_end.app.api.results import confirm_result
+from back_end.app.api.schemas import ConfirmResultRequest
+from back_end.app.api.trends import get_trends
+from back_end.app.core.database import Base, create_database_tables
+from back_end.app.core.status import ArticleProcessingStatus
+from back_end.app.models import AnalysisResult, Article, TaskLog
+from back_end.app.repositories import ArticleRepository
+
+
+@pytest.fixture
+def session_factory():
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    create_database_tables(engine)
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    try:
+        yield factory
+    finally:
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+
+
+def test_models_create_tables_and_enforce_status_constraint(session_factory) -> None:
+    engine = session_factory.kw["bind"]
+    inspector = inspect(engine)
+
+    assert {
+        "articles",
+        "article_texts",
+        "analysis_results",
+        "task_logs",
+        "manual_confirmations",
+    }.issubset(set(inspector.get_table_names()))
+    assert any(
+        constraint["name"] == "uq_analysis_results_article_id"
+        for constraint in inspector.get_unique_constraints("analysis_results")
+    )
+
+    session = session_factory()
+    session.add(Article(title="bad status", status=99))
+    with pytest.raises(IntegrityError):
+        session.commit()
+    session.close()
+
+
+def test_repository_status_flow_failure_log_and_result_idempotency(session_factory) -> None:
+    session = session_factory()
+    repository = ArticleRepository(session)
+    article = repository.create_article(
+        title="钢材日报",
+        source="测试源",
+        company="测试期货",
+        file_type="pdf",
+        publish_time=datetime(2026, 7, 2, 9, 30),
+    )
+
+    repository.save_raw_text(article.id, "原始文本", parser_type="pdf")
+    assert article.status == ArticleProcessingStatus.PARSED
+    repository.save_cleaned_text(article.id, "清洗文本")
+    assert article.status == ArticleProcessingStatus.CLEANED
+    repository.update_status(article.id, ArticleProcessingStatus.RULE_ANALYZED)
+    repository.update_status(article.id, ArticleProcessingStatus.LLM_INFERRED)
+    repository.save_analysis_result(
+        article.id,
+        product="螺纹钢",
+        direction="看涨",
+        reason="需求改善",
+        confidence=0.82,
+        analysis_method="rule",
+        need_manual_review=False,
+    )
+    assert article.status == ArticleProcessingStatus.STORED
+
+    repository.save_analysis_result(
+        article.id,
+        product="铁矿石",
+        direction="中性",
+        reason="供需平衡",
+        confidence=0.64,
+        analysis_method="llm",
+        need_manual_review=True,
+    )
+    assert session.scalar(select(AnalysisResult).where(AnalysisResult.article_id == article.id)).product == "铁矿石"
+    assert len(session.scalars(select(AnalysisResult).where(AnalysisResult.article_id == article.id)).all()) == 1
+
+    failed = repository.create_article(title="坏文件")
+    repository.mark_failed(
+        failed.id,
+        stage="parser",
+        message="文件损坏",
+        duration_ms=12,
+    )
+    session.commit()
+
+    assert failed.status == ArticleProcessingStatus.FAILED
+    assert failed.error_msg == "文件损坏"
+    assert session.scalar(select(TaskLog).where(TaskLog.article_id == failed.id)).status == "failed"
+    session.close()
+
+
+def test_repository_filters_summary_and_trends(session_factory) -> None:
+    session = session_factory()
+    repository = ArticleRepository(session)
+    first = repository.create_article(
+        title="螺纹钢展望",
+        company="甲期货",
+        publish_time=datetime(2026, 7, 2, 9, 0),
+    )
+    second = repository.create_article(
+        title="铜市场观察",
+        company="乙期货",
+        publish_time=datetime(2026, 7, 2, 10, 0),
+    )
+    repository.save_analysis_result(
+        first.id,
+        product="螺纹钢",
+        direction="看涨",
+        reason="库存下降",
+        confidence=0.8,
+        analysis_method="rule",
+    )
+    repository.save_analysis_result(
+        second.id,
+        product="沪铜",
+        direction="看跌",
+        reason="需求偏弱",
+        confidence=0.55,
+        analysis_method="llm",
+        need_manual_review=True,
+    )
+    session.commit()
+
+    items, total = repository.list_articles(product="螺纹钢", page=1, page_size=10)
+    assert total == 1
+    assert items[0].title == "螺纹钢展望"
+    summary = repository.get_dashboard_summary(today=datetime(2026, 7, 2, 12, 0))
+    assert summary["total_articles"] == 2
+    assert summary["manual_review_count"] == 1
+    assert summary["direction_distribution"]["看涨"] == 1
+    assert repository.get_trends(product="螺纹钢")[0]["count"] == 1
+    session.close()
+
+
+def test_api_handlers_return_contracts_for_articles_trends_and_confirm(session_factory) -> None:
+    seed_session = session_factory()
+    repository = ArticleRepository(seed_session)
+    article = repository.create_article(
+        title="豆粕行情",
+        source="日报",
+        company="丙期货",
+        publish_time=datetime(2026, 7, 2, 11, 0),
+    )
+    repository.save_raw_text(article.id, "raw", parser_type="html")
+    repository.save_cleaned_text(article.id, "cleaned")
+    result = repository.save_analysis_result(
+        article.id,
+        product="豆粕",
+        direction="中性",
+        reason="震荡整理",
+        confidence=0.45,
+        analysis_method="llm",
+        need_manual_review=True,
+    )
+    repository.save_task_log(
+        article_id=article.id,
+        stage="llm",
+        status="success",
+        message="ok",
+        duration_ms=30,
+    )
+    seed_session.commit()
+    seed_session.close()
+
+    api_session = session_factory()
+
+    list_body = list_articles(product="豆粕", page=1, page_size=20, session=api_session)
+    assert list_body["code"] == 0
+    assert list_body["data"]["total"] == 1
+    assert list_body["data"]["items"][0]["need_manual_review"] is True
+
+    detail_body = get_article_detail(article.id, session=api_session)
+    assert detail_body["data"]["text"]["cleaned_text"] == "cleaned"
+    assert detail_body["data"]["task_logs"][0]["stage"] == "llm"
+
+    trends_body = get_trends(product="豆粕", session=api_session)
+    assert trends_body["data"]["items"][0]["direction"] == "中性"
+
+    confirm_body = confirm_result(
+        result.id,
+        ConfirmResultRequest(
+            product="豆粕",
+            direction="看涨",
+            reason="人工确认需求改善",
+            confidence=0.9,
+            confirmed_by="analyst",
+        ),
+        session=api_session,
+    )
+    assert confirm_body["code"] == 0
+    assert confirm_body["data"]["original_direction"] == "中性"
+
+    confirmed_detail = get_article_detail(article.id, session=api_session)
+    assert confirmed_detail["data"]["analysis_result"]["direction"] == "看涨"
+    assert confirmed_detail["data"]["analysis_result"]["analysis_method"] == "manual"
+    assert confirmed_detail["data"]["analysis_result"]["need_manual_review"] is False
+    api_session.close()

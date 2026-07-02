@@ -2,7 +2,7 @@ import logging
 
 from back_end.app.core.config import Settings
 
-
+# 统一日志配置
 def setup_logging(settings: Settings) -> None:
     logging.basicConfig(
         level=settings.log_level.upper(),
