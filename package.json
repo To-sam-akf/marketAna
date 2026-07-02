@@ -1,0 +1,9 @@
+{
+  "name": "marketana",
+  "private": true,
+  "scripts": {
+    "frontend:dev": "npm --prefix front_end run dev",
+    "frontend:build": "npm --prefix front_end run build",
+    "frontend:type-check": "npm --prefix front_end run type-check"
+  }
+}
