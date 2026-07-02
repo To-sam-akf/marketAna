@@ -96,10 +96,9 @@ source ~/.bashrc
 uv --version
 ```
 
-安装 Python 3.11：
-
-```sh
-uv python install 3.11
+进入到文件夹
+```
+cd marketAna
 ```
 
 按 `uv.lock` 对齐后端依赖：
@@ -113,6 +112,12 @@ uv sync --frozen
 ```sh
 uv lock
 uv sync
+```
+
+激活uv环境
+
+```
+source .venv/bin/activate
 ```
 
 日常开发中优先使用 `uv sync --frozen`，这样每个人安装到的后端依赖版本一致。

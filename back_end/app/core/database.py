@@ -13,6 +13,7 @@ from back_end.app.core.exceptions import AppException, ErrorCode
 class Base(DeclarativeBase):
     pass
 
+# 创建引擎（Engine） — 管理连接池
 
 def build_engine(database_url: str | None) -> Engine | None:
     if not database_url:
@@ -24,6 +25,7 @@ def build_engine(database_url: str | None) -> Engine | None:
         connect_args["connect_timeout"] = 2
 
     return create_engine(database_url, pool_pre_ping=True, connect_args=connect_args)
+
 
 
 def check_database_connection(database_url: str | None = None) -> str:
