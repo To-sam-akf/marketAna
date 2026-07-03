@@ -6,10 +6,15 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "apscheduler>=3.10.4",
+    "beautifulsoup4>=4.15.0",
     "fastapi>=0.115.0,<0.116.0",
     "httpx>=0.27.0,<0.28.0",
+    "lxml>=6.1.1",
+    "pillow>=12.3.0",
     "pydantic-settings>=2.6.0",
+    "pymupdf>=1.28.0",
     "pymysql>=1.1.1",
+    "pytesseract>=0.3.13",
     "sqlalchemy>=2.0.36",
     "uvicorn[standard]>=0.32.0",
 ]
@@ -18,3 +23,7 @@ dependencies = [
 dev = [
     "pytest>=8.3.0",
 ]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
