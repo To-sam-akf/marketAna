@@ -1,12 +1,21 @@
 # MarketANA API Mock Contract
 
-本文档冻结开发者 A 在 pn02、pn09 阶段提供给前端开发者 C 的第一版接口契约。前端可以直接基于本文档编写页面类型、mock 数据和 API client；真实后端接入时应保持字段名、枚举值和分页结构不变。
+本文档用于对齐当前前端初版页面的真实接口需求。前端代码位置：
 
-## 1. Common Contract
+- API client: `front_end/src/api/client.ts`
+- TypeScript types: `front_end/src/api/types.ts`
+- Mock data: `front_end/src/mock/*.json`
 
-### 1.1 Unified Response
+当前前端打开了 `USE_MOCK = true`。切到真实后端时，会直接请求 `http://localhost:8000` 下的 4 个接口：
 
-所有成功接口统一返回：
+- `GET /api/products`
+- `GET /api/companies`
+- `GET /api/trends`
+- `GET /api/articles`
+
+## 1. Unified Response
+
+所有接口统一返回：
 
 ```json
 {
@@ -16,7 +25,19 @@
 }
 ```
 
-所有错误接口统一返回：
+前端当前类型为：
+
+```ts
+export interface ApiResponse<T> {
+  code: number
+  message: string
+  data: T
+}
+```
+
+注意：当前前端没有处理 `data: null`，真实接口报错时可以返回 `data: null`，但成功响应必须保证 `data` 类型稳定。
+
+错误响应建议：
 
 ```json
 {
@@ -27,55 +48,344 @@
 }
 ```
 
-常用错误码：
+## 2. Shared Enums
 
-| code | meaning |
-| --- | --- |
-| `0` | success |
-| `10000` | internal error |
-| `10001` | validation error |
-| `10002` | not found |
-| `20001` | database unconfigured |
-| `20002` | database error |
-| `30001` | LLM unconfigured |
+方向枚举固定：
 
-### 1.2 Enums
+```ts
+type Direction = "看涨" | "看跌" | "中性"
+```
 
-文章处理状态：
+置信度统一使用 `0-1` 小数，前端会渲染为百分比：
 
-| status | meaning |
-| --- | --- |
-| `-1` | 失败 |
-| `0` | 未处理 |
-| `1` | 解析完成 |
-| `2` | 清洗完成 |
-| `3` | 规则识别完成 |
-| `4` | LLM 推理完成 |
-| `5` | 已入库 |
+```ts
+(confidence * 100).toFixed(0) + "%"
+```
 
-方向枚举固定为：`看涨`、`看跌`、`中性`。
+趋势热力图的 `value` 规则：
 
-分析方法枚举固定为：`rule`、`llm`、`manual`。
+- `value > 0`：看涨强度
+- `value < 0`：看跌强度
+- `value = 0`：中性
 
-置信度统一使用 `0-1` 小数，前端展示百分比时自行格式化。
+## 3. Products Page
 
-### 1.3 Core Table Fields
+### `GET /api/products`
 
-| table | fields |
-| --- | --- |
-| `articles` | `id`, `title`, `source`, `company`, `file_url`, `file_type`, `publish_time`, `status`, `error_msg`, `created_at`, `updated_at` |
-| `article_texts` | `id`, `article_id`, `raw_text`, `cleaned_text`, `raw_length`, `cleaned_length`, `parser_type`, `created_at`, `updated_at` |
-| `analysis_results` | `id`, `article_id`, `product`, `direction`, `reason`, `confidence`, `analysis_method`, `need_manual_review`, `analysis_time`, `created_at`, `updated_at` |
-| `task_logs` | `id`, `article_id`, `stage`, `status`, `message`, `duration_ms`, `created_at` |
-| `manual_confirmations` | `id`, `article_id`, `original_product`, `original_direction`, `original_reason`, `original_confidence`, `confirmed_product`, `confirmed_direction`, `confirmed_reason`, `confirmed_confidence`, `confirmed_by`, `note`, `confirmed_at` |
+用于“品种”页面。前端期望 `data` 直接是数组。
 
-## 2. Dashboard Summary
+Type:
+
+```ts
+interface ProductItem {
+  product: string
+  predictions: Prediction[]
+}
+
+interface Prediction {
+  direction: "看涨" | "看跌" | "中性"
+  confidence: number
+  company: string
+  date: string
+  reason?: string
+}
+```
+
+Response mock:
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": [
+    {
+      "product": "螺纹钢",
+      "predictions": [
+        {
+          "direction": "看涨",
+          "confidence": 0.82,
+          "company": "南华期货",
+          "date": "2026-06-15",
+          "reason": "基建投资加速，需求端支撑较强"
+        },
+        {
+          "direction": "看跌",
+          "confidence": 0.63,
+          "company": "中信期货",
+          "date": "2026-06-16",
+          "reason": "房地产开工不及预期，库存累积"
+        }
+      ]
+    },
+    {
+      "product": "铁矿石",
+      "predictions": [
+        {
+          "direction": "看涨",
+          "confidence": 0.75,
+          "company": "永安期货",
+          "date": "2026-06-14",
+          "reason": "海外发运减少，港口库存下降"
+        },
+        {
+          "direction": "中性",
+          "confidence": 0.52,
+          "company": "国泰君安",
+          "date": "2026-06-17",
+          "reason": "供需双弱，短期震荡"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Empty response:
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": []
+}
+```
+
+后端映射建议：
+
+- 从 `analysis_results.product` 分组。
+- 每条 `predictions[]` 来自一条有效分析结果。
+- `date` 优先取 `articles.publish_time` 的日期部分；没有发布时间时取 `analysis_results.analysis_time` 的日期部分。
+- `company` 取 `articles.company`，为空时可用空字符串或来源名兜底。
+- `reason` 取 `analysis_results.reason`。
+
+## 4. Companies Page
+
+### `GET /api/companies`
+
+用于“期货公司”页面。前端期望 `data` 直接是数组。
+
+Type:
+
+```ts
+interface CompanyItem {
+  company: string
+  predictions: {
+    product: string
+    direction: "看涨" | "看跌" | "中性"
+    confidence: number
+    date: string
+  }[]
+}
+```
+
+Response mock:
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": [
+    {
+      "company": "南华期货",
+      "predictions": [
+        {
+          "product": "螺纹钢",
+          "direction": "看涨",
+          "confidence": 0.82,
+          "date": "2026-06-15"
+        },
+        {
+          "product": "沪铜",
+          "direction": "看涨",
+          "confidence": 0.7,
+          "date": "2026-06-15"
+        }
+      ]
+    },
+    {
+      "company": "中信期货",
+      "predictions": [
+        {
+          "product": "豆粕",
+          "direction": "看跌",
+          "confidence": 0.65,
+          "date": "2026-06-16"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Empty response:
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": []
+}
+```
+
+后端映射建议：
+
+- 从 `articles.company` 分组。
+- `predictions[].product` 取 `analysis_results.product`。
+- `predictions[].date` 优先取 `articles.publish_time` 的日期部分。
+
+## 5. Trends Page
+
+### `GET /api/trends`
+
+用于“趋势分析”页面热力图。前端当前不传 query 参数，期望一次性返回所有热力图点位。
+
+Type:
+
+```ts
+interface HeatmapData {
+  date: string
+  product: string
+  value: number
+}
+```
+
+Response mock:
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": [
+    {
+      "date": "2026-06-01",
+      "product": "螺纹钢",
+      "value": 0.8
+    },
+    {
+      "date": "2026-06-02",
+      "product": "螺纹钢",
+      "value": -0.3
+    },
+    {
+      "date": "2026-06-01",
+      "product": "豆粕",
+      "value": -0.6
+    },
+    {
+      "date": "2026-06-02",
+      "product": "沪铜",
+      "value": 0
+    }
+  ]
+}
+```
+
+Empty response:
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": []
+}
+```
+
+后端映射建议：
+
+- 当前前端需要的是热力图强度，不是 `{ direction, count }` 聚合行。
+- 可按 `date + product` 聚合，将方向转为分值后取平均或加权平均：
+  - `看涨` -> `+confidence`
+  - `看跌` -> `-confidence`
+  - `中性` -> `0`
+- `value` 建议限制在 `[-1, 1]`。
+
+如果后端仍保留 pn09 原始趋势接口 `{ items: [{ date, product, direction, count }] }`，需要新增一个前端适配接口，或在 `client.ts` 增加转换逻辑。当前“直接适配前端初版”的选择是让 `/api/trends` 返回 `HeatmapData[]`。
+
+## 6. Articles Page
+
+### `GET /api/articles`
+
+用于“资讯”页面。前端当前不传筛选和分页参数，期望 `data` 直接是数组。
+
+Type:
+
+```ts
+interface ArticleItem {
+  id: number
+  title: string
+  source: string
+  company: string
+  publish_time: string
+  summary?: string
+  url?: string
+}
+```
+
+Response mock:
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": [
+    {
+      "id": 1,
+      "title": "螺纹钢市场周报：需求边际回暖，短期支撑较强",
+      "source": "南华期货",
+      "company": "南华期货",
+      "publish_time": "2026-06-15",
+      "summary": "本周螺纹钢表需环比回升，库存去化加速，短期价格有支撑。",
+      "url": "/files/rebar-weekly.html"
+    },
+    {
+      "id": 2,
+      "title": "铁矿石：海外发运回落，港口库存下降",
+      "source": "永安期货",
+      "company": "永安期货",
+      "publish_time": "2026-06-14",
+      "summary": "澳大利亚和巴西发运量均出现回落，港口库存由增转降，矿价偏强运行。",
+      "url": "/files/iron-ore.html"
+    }
+  ]
+}
+```
+
+Empty response:
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": []
+}
+```
+
+后端映射建议：
+
+- `id` 取 `articles.id`。
+- `title` 取 `articles.title`。
+- `source` 取 `articles.source`，为空时可用 `articles.company`。
+- `company` 取 `articles.company`，为空时可用空字符串。
+- `publish_time` 当前前端 mock 使用日期字符串 `YYYY-MM-DD`；建议真实接口也返回日期部分，避免页面显示过长。
+- `summary` 可先取 `analysis_results.reason`，没有分析结果时取 `article_texts.cleaned_text` 前 80-120 字。
+- `url` 可映射 `articles.file_url`。当前组件尚未渲染 `url`，但类型已预留。
+
+## 7. Current Frontend Gaps
+
+以下 pn09 原接口当前前端初版没有调用：
+
+- `GET /api/dashboard/summary`
+- `GET /api/articles/{article_id}`
+- `POST /api/tasks/run`
+- `POST /api/results/{result_id}/confirm`
+
+这些接口可以保留给后续 dashboard、详情页、手动刷新和人工确认功能，但不要作为当前初版页面的必需联调项。
+
+## 8. Backend Raw Contracts Reserved For Later
+
+后续如果前端扩展详情页和人工确认，可继续使用以下后端原始契约。
 
 ### `GET /api/dashboard/summary`
-
-用于首页统计卡片、方向分布图和待人工确认提示。
-
-Response:
 
 ```json
 {
@@ -97,106 +407,7 @@ Response:
 }
 ```
 
-## 3. Article List
-
-### `GET /api/articles`
-
-用于文章列表、筛选区、搜索和分页。
-
-Query parameters:
-
-| name | type | required | description |
-| --- | --- | --- | --- |
-| `product` | string | no | 按品种筛选，如 `豆粕` |
-| `company` | string | no | 按期货公司筛选，如 `甲期货` |
-| `direction` | string | no | `看涨`、`看跌`、`中性` |
-| `status` | number | no | 文章处理状态 |
-| `start_time` | ISO datetime | no | 起始时间 |
-| `end_time` | ISO datetime | no | 结束时间 |
-| `keyword` | string | no | 标题关键词 |
-| `page` | number | no | 默认 `1` |
-| `page_size` | number | no | 默认 `20`，最大 `100` |
-
-Example:
-
-`GET /api/articles?product=豆粕&company=甲期货&direction=看涨&status=5&page=1&page_size=20`
-
-Response:
-
-```json
-{
-  "code": 0,
-  "message": "ok",
-  "data": {
-    "items": [
-      {
-        "id": 101,
-        "title": "豆粕短期需求改善",
-        "source": "日报",
-        "company": "甲期货",
-        "file_url": "/files/soymeal.html",
-        "file_type": "html",
-        "publish_time": "2026-07-02T09:00:00",
-        "status": 5,
-        "error_msg": null,
-        "created_at": "2026-07-02T09:05:00",
-        "updated_at": "2026-07-02T09:08:00",
-        "product": "豆粕",
-        "direction": "看涨",
-        "reason": "下游补库增加，库存压力缓解。",
-        "confidence": 0.82,
-        "need_manual_review": false,
-        "analysis_time": "2026-07-02T09:08:00"
-      },
-      {
-        "id": 102,
-        "title": "沪铜短期观点分歧",
-        "source": "晨会纪要",
-        "company": "乙期货",
-        "file_url": "/files/copper.pdf",
-        "file_type": "pdf",
-        "publish_time": "2026-07-02T10:15:00",
-        "status": 5,
-        "error_msg": null,
-        "created_at": "2026-07-02T10:20:00",
-        "updated_at": "2026-07-02T10:23:00",
-        "product": "沪铜",
-        "direction": "中性",
-        "reason": "宏观扰动和需求弱修复并存，短线以震荡判断为主。",
-        "confidence": 0.45,
-        "need_manual_review": true,
-        "analysis_time": "2026-07-02T10:23:00"
-      }
-    ],
-    "total": 2,
-    "page": 1,
-    "page_size": 20
-  }
-}
-```
-
-Empty response:
-
-```json
-{
-  "code": 0,
-  "message": "ok",
-  "data": {
-    "items": [],
-    "total": 0,
-    "page": 1,
-    "page_size": 20
-  }
-}
-```
-
-## 4. Article Detail
-
 ### `GET /api/articles/{article_id}`
-
-用于详情页或详情抽屉。返回文章基础信息、原始/清洗文本、当前分析结果、流水线日志和人工确认记录。
-
-Response:
 
 ```json
 {
@@ -248,15 +459,6 @@ Response:
       {
         "id": 1,
         "article_id": 101,
-        "stage": "parser",
-        "status": "success",
-        "message": "parsed html",
-        "duration_ms": 120,
-        "created_at": "2026-07-02T09:06:00"
-      },
-      {
-        "id": 2,
-        "article_id": 101,
         "stage": "llm",
         "status": "success",
         "message": "ok",
@@ -269,151 +471,9 @@ Response:
 }
 ```
 
-待人工确认详情示例：
-
-```json
-{
-  "code": 0,
-  "message": "ok",
-  "data": {
-    "article": {
-      "id": 102,
-      "title": "沪铜短期观点分歧",
-      "source": "晨会纪要",
-      "company": "乙期货",
-      "file_url": "/files/copper.pdf",
-      "file_type": "pdf",
-      "publish_time": "2026-07-02T10:15:00",
-      "status": 5,
-      "error_msg": null,
-      "created_at": "2026-07-02T10:20:00",
-      "updated_at": "2026-07-02T10:23:00",
-      "product": "沪铜",
-      "direction": "中性",
-      "reason": "宏观扰动和需求弱修复并存，短线以震荡判断为主。",
-      "confidence": 0.45,
-      "need_manual_review": true,
-      "analysis_time": "2026-07-02T10:23:00"
-    },
-    "text": {
-      "id": 502,
-      "article_id": 102,
-      "raw_text": "原始正文...",
-      "cleaned_text": "清洗后正文...",
-      "raw_length": 3280,
-      "cleaned_length": 2740,
-      "parser_type": "pdf",
-      "created_at": "2026-07-02T10:21:00",
-      "updated_at": "2026-07-02T10:22:00"
-    },
-    "analysis_result": {
-      "id": 202,
-      "article_id": 102,
-      "product": "沪铜",
-      "direction": "中性",
-      "reason": "宏观扰动和需求弱修复并存，短线以震荡判断为主。",
-      "confidence": 0.45,
-      "analysis_method": "llm",
-      "need_manual_review": true,
-      "analysis_time": "2026-07-02T10:23:00"
-    },
-    "task_logs": [
-      {
-        "id": 3,
-        "article_id": 102,
-        "stage": "llm",
-        "status": "success",
-        "message": "low confidence, manual review required",
-        "duration_ms": 680,
-        "created_at": "2026-07-02T10:23:00"
-      }
-    ],
-    "manual_confirmations": []
-  }
-}
-```
-
-Not found response:
-
-```json
-{
-  "code": 10002,
-  "message": "Article not found",
-  "data": null,
-  "detail": {
-    "article_id": 999
-  }
-}
-```
-
-## 5. Trends
-
-### `GET /api/trends`
-
-用于趋势折线图、柱状图或按品种切换的聚合视图。
-
-Query parameters:
-
-| name | type | required | description |
-| --- | --- | --- | --- |
-| `product` | string | no | 按品种筛选 |
-| `start_time` | ISO datetime | no | 起始时间 |
-| `end_time` | ISO datetime | no | 结束时间 |
-
-Example:
-
-`GET /api/trends?product=豆粕&start_time=2026-07-01T00:00:00&end_time=2026-07-02T23:59:59`
-
-Response:
-
-```json
-{
-  "code": 0,
-  "message": "ok",
-  "data": {
-    "items": [
-      {
-        "date": "2026-07-01",
-        "product": "豆粕",
-        "direction": "看涨",
-        "count": 4
-      },
-      {
-        "date": "2026-07-01",
-        "product": "豆粕",
-        "direction": "看跌",
-        "count": 1
-      },
-      {
-        "date": "2026-07-02",
-        "product": "豆粕",
-        "direction": "中性",
-        "count": 2
-      }
-    ]
-  }
-}
-```
-
-Empty response:
-
-```json
-{
-  "code": 0,
-  "message": "ok",
-  "data": {
-    "items": []
-  }
-}
-```
-
-## 6. Manual Run
-
 ### `POST /api/tasks/run`
 
-用于前端手动刷新或触发一次扫描。开发者 B 接入真实 Pipeline 前，此接口可以返回占位结果，但字段结构不变。
-
-Request body:
+Request:
 
 ```json
 {
@@ -422,31 +482,7 @@ Request body:
 }
 ```
 
-指定单篇文章重跑：
-
-```json
-{
-  "article_id": 101,
-  "limit": null
-}
-```
-
 Response:
-
-```json
-{
-  "code": 0,
-  "message": "ok",
-  "data": {
-    "triggered": true,
-    "article_id": null,
-    "limit": 20,
-    "message": "Manual pipeline run submitted"
-  }
-}
-```
-
-Current placeholder response before Pipeline is wired:
 
 ```json
 {
@@ -461,13 +497,9 @@ Current placeholder response before Pipeline is wired:
 }
 ```
 
-## 7. Manual Confirm
-
 ### `POST /api/results/{result_id}/confirm`
 
-用于人工确认或修正低置信分析结果。提交成功后，后端会把当前 `analysis_result` 更新为人工确认值，并写入 `manual_confirmations` 审计记录。
-
-Request body:
+Request:
 
 ```json
 {
@@ -504,83 +536,11 @@ Response:
 }
 ```
 
-Validation error example:
-
-```json
-{
-  "code": 10001,
-  "message": "Request validation failed",
-  "data": null,
-  "detail": [
-    {
-      "type": "less_than_equal",
-      "loc": ["body", "confidence"],
-      "msg": "Input should be less than or equal to 1",
-      "input": 1.2,
-      "ctx": {
-        "le": 1.0
-      }
-    }
-  ]
-}
-```
-
-## 8. Frontend Type Suggestions
-
-前端建议先定义以下类型，字段名与本文档保持一致：
-
-```ts
-export interface ApiResponse<T> {
-  code: number
-  message: string
-  data: T | null
-  detail?: unknown
-}
-
-export interface DashboardSummary {
-  today_articles: number
-  total_articles: number
-  success_count: number
-  failed_count: number
-  success_rate: number
-  manual_review_count: number
-  direction_distribution: Record<'看涨' | '看跌' | '中性', number>
-}
-
-export interface ArticleListItem {
-  id: number
-  title: string
-  source: string | null
-  company: string | null
-  file_url: string | null
-  file_type: string | null
-  publish_time: string | null
-  status: -1 | 0 | 1 | 2 | 3 | 4 | 5
-  error_msg: string | null
-  created_at: string | null
-  updated_at: string | null
-  product: string | null
-  direction: '看涨' | '看跌' | '中性' | null
-  reason: string | null
-  confidence: number | null
-  need_manual_review: boolean
-  analysis_time: string | null
-}
-
-export interface TrendItem {
-  date: string
-  product: string
-  direction: '看涨' | '看跌' | '中性'
-  count: number
-}
-```
-
 ## 9. Acceptance Checklist
 
-- C 可以用 `GET /api/dashboard/summary` 完成首页统计卡片和方向分布。
-- C 可以用 `GET /api/articles` 完成文章列表、筛选、搜索、分页和待人工确认标记。
-- C 可以用 `GET /api/articles/{article_id}` 完成详情页或详情抽屉。
-- C 可以用 `GET /api/trends` 完成趋势图。
-- C 可以用 `POST /api/tasks/run` 完成手动刷新入口。
-- C 可以用 `POST /api/results/{result_id}/confirm` 完成人工确认提交。
-- 后续如修改字段名、枚举、分页结构或响应外壳，A 必须同步 B/C。
+- `/api/products` 返回 `ProductItem[]`，品种页可渲染卡片和展开预测。
+- `/api/companies` 返回 `CompanyItem[]`，公司页可渲染公司卡片和预测列表。
+- `/api/trends` 返回 `HeatmapData[]`，热力图可按 `date/product/value` 渲染。
+- `/api/articles` 返回 `ArticleItem[]`，资讯页可渲染标题、来源、日期和摘要。
+- 所有成功响应保持 `code: 0`、`message: "ok"`。
+- 当前初版接口不要返回分页对象 `{ items, total }`，否则前端 `res.data` 会类型不匹配。

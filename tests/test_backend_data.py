@@ -7,6 +7,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from back_end.app.api.articles import get_article_detail, list_articles
+from back_end.app.api.companies import get_companies
+from back_end.app.api.products import get_products
 from back_end.app.api.results import confirm_result
 from back_end.app.api.schemas import ConfirmResultRequest
 from back_end.app.api.trends import get_trends
@@ -187,15 +189,27 @@ def test_api_handlers_return_contracts_for_articles_trends_and_confirm(session_f
 
     list_body = list_articles(product="豆粕", page=1, page_size=20, session=api_session)
     assert list_body["code"] == 0
-    assert list_body["data"]["total"] == 1
-    assert list_body["data"]["items"][0]["need_manual_review"] is True
+    assert len(list_body["data"]) == 1
+    assert list_body["data"][0]["summary"] == "震荡整理"
+    assert list_body["data"][0]["publish_time"] == "2026-07-02"
+
+    products_body = get_products(session=api_session)
+    assert products_body["data"][0]["product"] == "豆粕"
+    assert products_body["data"][0]["predictions"][0]["company"] == "丙期货"
+    assert products_body["data"][0]["predictions"][0]["date"] == "2026-07-02"
+
+    companies_body = get_companies(session=api_session)
+    assert companies_body["data"][0]["company"] == "丙期货"
+    assert companies_body["data"][0]["predictions"][0]["product"] == "豆粕"
+    assert companies_body["data"][0]["predictions"][0]["date"] == "2026-07-02"
 
     detail_body = get_article_detail(article.id, session=api_session)
     assert detail_body["data"]["text"]["cleaned_text"] == "cleaned"
     assert detail_body["data"]["task_logs"][0]["stage"] == "llm"
 
     trends_body = get_trends(product="豆粕", session=api_session)
-    assert trends_body["data"]["items"][0]["direction"] == "中性"
+    assert trends_body["data"][0]["product"] == "豆粕"
+    assert trends_body["data"][0]["value"] == 0.0
 
     confirm_body = confirm_result(
         result.id,

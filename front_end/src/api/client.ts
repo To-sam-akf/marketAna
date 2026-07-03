@@ -6,6 +6,7 @@ import type {
   ArticleItem,
 } from './types'
 
+// 把 ../mock/products.json 这个 JSON 文件当成一个模块导入，并赋值给变量 productsMock。
 import productsMock from '../mock/products.json'
 import companiesMock from '../mock/companies.json'
 import trendsMock from '../mock/trends.json'
@@ -34,21 +35,21 @@ async function fetchApi<T>(url: string): Promise<ApiResponse<T>> {
 // ===== API 接口 =====
 
 export async function getProducts(): Promise<ApiResponse<ProductItem[]>> {
-  if (USE_MOCK) return fetchMock(productsMock)
+  if (USE_MOCK) return fetchMock(productsMock as ApiResponse<ProductItem[]>)
   return fetchApi('/api/products')
 }
 
 export async function getCompanies(): Promise<ApiResponse<CompanyItem[]>> {
-  if (USE_MOCK) return fetchMock(companiesMock)
+  if (USE_MOCK) return fetchMock(companiesMock as ApiResponse<CompanyItem[]>)
   return fetchApi('/api/companies')
 }
 
 export async function getTrends(): Promise<ApiResponse<HeatmapData[]>> {
-  if (USE_MOCK) return fetchMock(trendsMock)
+  if (USE_MOCK) return fetchMock(trendsMock as ApiResponse<HeatmapData[]>)
   return fetchApi('/api/trends')
 }
 
 export async function getArticles(): Promise<ApiResponse<ArticleItem[]>> {
-  if (USE_MOCK) return fetchMock(articlesMock)
+  if (USE_MOCK) return fetchMock(articlesMock as ApiResponse<ArticleItem[]>)
   return fetchApi('/api/articles')
 }
