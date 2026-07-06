@@ -48,6 +48,7 @@ def get_companies(session: Session = Depends(get_session)) -> dict:
             grouped[company] = []
         
         grouped[company].append({
+            "article_id": article.id,
             "product": result.product,
             "direction": result.direction,
             "confidence": result.confidence,

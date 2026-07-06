@@ -26,6 +26,7 @@ def get_products(session: Session = Depends(get_session)) -> dict:
             grouped[product] = []
         grouped[product].append(
             {
+                "article_id": article.id,
                 "direction": result.direction,
                 "confidence": result.confidence,
                 "company": article.company or article.source or "",
