@@ -11,11 +11,14 @@ from back_end.app.api.companies import get_companies
 from back_end.app.api.products import get_products
 from back_end.app.api.results import confirm_result
 from back_end.app.api.schemas import ConfirmResultRequest
+from back_end.app.api.schemas import TaskRunRequest
+from back_end.app.api.tasks import run_task
 from back_end.app.api.trends import get_trends
 from back_end.app.core.database import Base, create_database_tables
 from back_end.app.core.status import ArticleProcessingStatus
 from back_end.app.models import AnalysisResult, Article, TaskLog
 from back_end.app.repositories import ArticleRepository
+from pn11.models import BatchResult
 
 
 @pytest.fixture
@@ -230,3 +233,80 @@ def test_api_handlers_return_contracts_for_articles_trends_and_confirm(session_f
     assert confirmed_detail["data"]["analysis_result"]["analysis_method"] == "manual"
     assert confirmed_detail["data"]["analysis_result"]["need_manual_review"] is False
     api_session.close()
+
+
+def test_articles_list_handles_null_publish_time(session_factory) -> None:
+    session = session_factory()
+    repository = ArticleRepository(session)
+    article = repository.create_article(
+        title="无发布时间文章",
+        source="本地测试",
+        company="测试期货",
+        publish_time=None,
+    )
+    repository.save_analysis_result(
+        article.id,
+        product="螺纹钢",
+        direction="看涨",
+        reason="需求改善",
+        confidence=0.9,
+        analysis_method="llm",
+    )
+    session.commit()
+
+    body = list_articles(page=1, page_size=20, session=session)
+
+    assert body["code"] == 0
+    assert body["data"][0]["title"] == "无发布时间文章"
+    assert body["data"][0]["publish_time"] == ""
+    session.close()
+
+
+def test_task_run_single_article_uses_pipeline(session_factory) -> None:
+    session = session_factory()
+    repository = ArticleRepository(session)
+    article = repository.create_article(title="已处理文章")
+    repository.save_analysis_result(
+        article.id,
+        product="豆粕",
+        direction="中性",
+        reason="已完成",
+        confidence=0.7,
+        analysis_method="rule",
+    )
+    session.commit()
+
+    body = run_task(TaskRunRequest(article_id=article.id), session=session)
+
+    assert body["code"] == 0
+    assert body["data"]["triggered"] == 1
+    assert body["data"]["succeeded"] == 1
+    assert body["data"]["failed"] == 0
+    session.close()
+
+
+def test_task_run_limit_uses_batch_process(session_factory, monkeypatch) -> None:
+    session = session_factory()
+    repository = ArticleRepository(session)
+    first = repository.create_article(title="待处理 1")
+    second = repository.create_article(title="待处理 2")
+    session.commit()
+
+    captured = {}
+
+    def fake_batch_process(article_ids, session_factory_arg, *, max_concurrency, pipeline_callback):
+        captured["article_ids"] = article_ids
+        captured["max_concurrency"] = max_concurrency
+        return BatchResult(total=len(article_ids), succeeded=1, failed=1)
+
+    monkeypatch.setattr("back_end.app.api.tasks.batch_process", fake_batch_process)
+
+    body = run_task(TaskRunRequest(limit=2), session=session)
+
+    assert body["code"] == 0
+    assert captured["article_ids"] == [first.id, second.id]
+    assert captured["max_concurrency"] == 2
+    assert body["data"]["triggered"] == 2
+    assert body["data"]["succeeded"] == 1
+    assert body["data"]["failed"] == 1
+    session.close()

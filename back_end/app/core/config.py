@@ -11,6 +11,7 @@ class Settings(BaseSettings):
 
     database_url: str | None = None
 
+    llm_provider: str = "openai"
     llm_api_key: str | None = None
     llm_base_url: str | None = None
     llm_model: str | None = None
@@ -18,7 +19,8 @@ class Settings(BaseSettings):
 
     task_batch_size: int = 20
     rule_confidence_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
-    scheduler_poll_interval_seconds: int = 300
+    # Scheduler 轮询间隔（秒）
+    scheduler_poll_interval_seconds: int = 3
 
     model_config = SettingsConfigDict(
         env_file=".env",

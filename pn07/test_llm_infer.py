@@ -21,6 +21,7 @@ from back_end.app.repositories.articles import ArticleRepository
 
 from pn07.models import LLMConfig, InferResult
 from pn07.json_parser import parse_llm_json
+from pn07.llm_client import LLMAPIClient
 from pn07.prompt_builder import build_messages
 
 
@@ -298,6 +299,66 @@ def test_full_infer_task_log(session_factory):
 def test_llm_config_is_configured():
     assert LLMConfig().is_configured is False
     assert LLMConfig(api_key="k", base_url="u").is_configured is True
+    assert LLMConfig(provider="wenhua", base_url="https://example.test/api").is_configured is True
+
+
+def test_wenhua_sse_line_parser():
+    line = 'data: {"choices":[{"delta":{"content":"你好"},"finish_reason":null}]}'
+    content, stopped = LLMAPIClient._parse_wenhua_sse_line(line)
+    assert content == "你好"
+    assert stopped is False
+
+    content, stopped = LLMAPIClient._parse_wenhua_sse_line(
+        '{"choices":[{"delta":{"content":""},"finish_reason":"stop"}]}'
+    )
+    assert content == ""
+    assert stopped is True
+
+
+def test_wenhua_chat_stream(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def iter_lines(self):
+            return iter(
+                [
+                    'data: {"choices":[{"delta":{"content":"{\\"product\\":\\"螺纹钢\\""},"finish_reason":null}]}',
+                    'data: {"choices":[{"delta":{"content":",\\"direction\\":\\"看涨\\",\\"reason\\":\\"需求改善\\",\\"confidence\\":0.8}"},"finish_reason":null}]}',
+                    'data: {"choices":[{"delta":{"content":""},"finish_reason":"stop"}]}',
+                ]
+            )
+
+    class FakeStream:
+        def __enter__(self):
+            return FakeResponse()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    captured = {}
+
+    def fake_stream(method, url, json, headers, timeout):
+        captured["method"] = method
+        captured["url"] = url
+        captured["json"] = json
+        return FakeStream()
+
+    monkeypatch.setattr("httpx.stream", fake_stream)
+
+    client = LLMAPIClient(
+        LLMConfig(
+            provider="wenhua",
+            base_url="https://swarm.wenhua.com.cn/aiservice/api/ShiXi/GetContent",
+            timeout_seconds=5,
+        )
+    )
+    response = client.chat([{"role": "user", "content": "请输出 JSON"}], retries=0)
+
+    assert captured["method"] == "POST"
+    assert captured["url"].endswith("/GetContent")
+    assert captured["json"]["content"] == "user:\n请输出 JSON"
+    assert '"product":"螺纹钢"' in response
+    assert '"direction":"看涨"' in response
 
 
 # ---- InferResult ----

@@ -360,7 +360,11 @@ class ArticleRepository(BaseRepository):
                     selectinload(Article.analysis_result),
                     selectinload(Article.text),
                 )
-                .order_by(Article.publish_time.desc().nullslast(), Article.created_at.desc())
+                .order_by(
+                    Article.publish_time.is_(None),
+                    Article.publish_time.desc(),
+                    Article.created_at.desc(),
+                )
                 .offset((page - 1) * page_size)
                 .limit(page_size)
             ).all()
