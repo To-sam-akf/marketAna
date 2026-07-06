@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     task_batch_size: int = 20
     rule_confidence_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     # Scheduler 轮询间隔（秒）
-    scheduler_poll_interval_seconds: int = 3
+    scheduler_poll_interval_seconds: int = 300
 
     model_config = SettingsConfigDict(
         env_file=".env",
