@@ -10,11 +10,20 @@ export type Direction = '看涨' | '看跌' | '中性'
 
 // ===== 单条预测 =====
 export interface Prediction {
+  article_id: number
   direction: Direction
   confidence: number
   company: string
   date: string
   reason?: string
+}
+
+export interface CompanyPrediction {
+  article_id: number
+  product: string
+  direction: Direction
+  confidence: number
+  date: string
 }
 
 // ===== 品种页面 =====
@@ -26,12 +35,7 @@ export interface ProductItem {
 // ===== 期货公司页面 =====
 export interface CompanyItem {
   company: string
-  predictions: {
-    product: string
-    direction: Direction
-    confidence: number
-    date: string
-  }[]
+  predictions: CompanyPrediction[]
 }
 
 // ===== 热力图（趋势分析页面） =====

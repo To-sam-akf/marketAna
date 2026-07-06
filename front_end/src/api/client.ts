@@ -13,7 +13,7 @@ import trendsMock from '../mock/trends.json'
 import articlesMock from '../mock/articles.json'
 
 // 切换开关：true = 使用 mock 数据，false = 调用真实后端
-const USE_MOCK = true
+const USE_MOCK = false
 
 // 真实后端基础地址
 const API_BASE = 'http://localhost:8000'
