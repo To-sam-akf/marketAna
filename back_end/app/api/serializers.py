@@ -9,11 +9,18 @@ def serialize_analysis_result(result: AnalysisResult | None) -> dict | None:
         "id": result.id,
         "article_id": result.article_id,
         "product": result.product,
+        "contract": result.contract,
+        "contract_key": result.contract_key,
         "direction": result.direction,
         "reason": result.reason,
         "confidence": result.confidence,
         "analysis_method": result.analysis_method,
         "need_manual_review": result.need_manual_review,
+        "is_primary": result.is_primary,
+        "model_name": result.model_name,
+        "llm_duration_ms": result.llm_duration_ms,
+        "llm_retry_count": result.llm_retry_count,
+        "llm_error_msg": result.llm_error_msg,
         "analysis_time": datetime_to_iso(result.analysis_time),
     }
 
@@ -92,6 +99,13 @@ def serialize_article_detail(article: Article) -> dict:
         "article": serialize_article_list_item(article),
         "text": serialize_article_text(article.text),
         "analysis_result": serialize_analysis_result(article.analysis_result),
+        "analysis_results": [
+            serialize_analysis_result(result)
+            for result in sorted(
+                article.analysis_results,
+                key=lambda item: (not item.is_primary, item.product, item.contract_key, item.id),
+            )
+        ],
         "task_logs": [
             serialize_task_log(log)
             for log in sorted(article.task_logs, key=lambda item: item.id)

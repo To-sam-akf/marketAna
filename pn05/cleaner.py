@@ -13,13 +13,7 @@ import time
 from typing import Any
 
 from pn05.models import CleanConfig, CleanResult
-from pn05.normalizer import (
-    detect_and_clean_encoding,
-    normalize_fullwidth,
-    normalize_whitespace,
-    remove_html_residue,
-)
-from pn05.noise_rules import filter_noise_lines, filter_noise_regex
+from pn05.structured_cleaner import clean_text
 
 logger = logging.getLogger(__name__)
 
@@ -74,38 +68,11 @@ def clean_article(
     result = CleanResult(raw_length=raw_length)
 
     try:
-        # 2. 编码检测与修复
-        text = detect_and_clean_encoding(raw_text)
-
-        # 3. HTML 残留移除
-        if config.remove_html_residue:
-            text = remove_html_residue(text)
-
-        # 4. 噪声行过滤
-        if config.filter_noise_lines:
-            lines = text.split("\n")
-            lines, noise_removed = filter_noise_lines(lines)
-            text = "\n".join(lines)
-            result.noise_lines_removed = noise_removed
-
-            # 正则段落模式
-            text, regex_removed = filter_noise_regex(text)
-            result.noise_lines_removed += (1 if regex_removed > 0 else 0)
-
-        # 5. 低密度块过滤（页眉/页脚）
-        if config.filter_low_density:
-            text, low_density_chars = _filter_low_density(text, config)
-            result.low_density_removed = low_density_chars
-
-        # 6. 空白规范化 + 全半角
-        if config.normalize_whitespace:
-            text = normalize_whitespace(text)
-        if config.normalize_fullwidth:
-            text = normalize_fullwidth(text)
-
-        # 7. 后处理：去除首尾空白 + 合并多余空行
-        text = text.strip()
-        text = re.sub(r"\n{3,}", "\n\n", text)
+        # 2-7. 编码修复、模板分区、噪声过滤、数字图表噪声压制、格式化输出
+        text, clean_stats = clean_text(raw_text, config)
+        result.noise_lines_removed = clean_stats.noise_lines_removed
+        result.numeric_blocks_removed = clean_stats.numeric_blocks_removed
+        result.low_density_removed = clean_stats.low_density_removed
 
         cleaned_length = len(text)
         result.cleaned_length = cleaned_length

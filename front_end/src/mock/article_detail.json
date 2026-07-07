@@ -36,13 +36,40 @@
       "id": 3,
       "article_id": 3,
       "product": "沪铜",
+      "contract": null,
+      "contract_key": "",
       "direction": "看涨",
       "reason": "新能源需求拉动，铜矿供给偏紧，中期看涨",
       "confidence": 0.7,
       "analysis_method": "rule",
       "need_manual_review": false,
+      "is_primary": true,
+      "model_name": null,
+      "llm_duration_ms": null,
+      "llm_retry_count": null,
+      "llm_error_msg": null,
       "analysis_time": "2026-06-15T10:04:00"
     },
+    "analysis_results": [
+      {
+        "id": 3,
+        "article_id": 3,
+        "product": "沪铜",
+        "contract": null,
+        "contract_key": "",
+        "direction": "看涨",
+        "reason": "新能源需求拉动，铜矿供给偏紧，中期看涨",
+        "confidence": 0.7,
+        "analysis_method": "rule",
+        "need_manual_review": false,
+        "is_primary": true,
+        "model_name": null,
+        "llm_duration_ms": null,
+        "llm_retry_count": null,
+        "llm_error_msg": null,
+        "analysis_time": "2026-06-15T10:04:00"
+      }
+    ],
     "task_logs": [
       {
         "id": 7,

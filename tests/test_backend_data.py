@@ -49,7 +49,7 @@ def test_models_create_tables_and_enforce_status_constraint(session_factory) -> 
         "manual_confirmations",
     }.issubset(set(inspector.get_table_names()))
     assert any(
-        constraint["name"] == "uq_analysis_results_article_id"
+        constraint["name"] == "uq_analysis_results_article_product_contract"
         for constraint in inspector.get_unique_constraints("analysis_results")
     )
 
@@ -97,8 +97,27 @@ def test_repository_status_flow_failure_log_and_result_idempotency(session_facto
         analysis_method="llm",
         need_manual_review=True,
     )
-    assert session.scalar(select(AnalysisResult).where(AnalysisResult.article_id == article.id)).product == "铁矿石"
-    assert len(session.scalars(select(AnalysisResult).where(AnalysisResult.article_id == article.id)).all()) == 1
+    saved = session.scalars(select(AnalysisResult).where(AnalysisResult.article_id == article.id)).all()
+    assert {result.product for result in saved} == {"螺纹钢", "铁矿石"}
+    assert len(saved) == 2
+
+    repository.save_analysis_result(
+        article.id,
+        product="铁矿石",
+        direction="看跌",
+        reason="需求走弱",
+        confidence=0.72,
+        analysis_method="llm",
+        need_manual_review=False,
+    )
+    saved = session.scalars(select(AnalysisResult).where(AnalysisResult.article_id == article.id)).all()
+    assert len(saved) == 2
+    assert session.scalar(
+        select(AnalysisResult).where(
+            AnalysisResult.article_id == article.id,
+            AnalysisResult.product == "铁矿石",
+        )
+    ).direction == "看跌"
 
     failed = repository.create_article(title="坏文件")
     repository.mark_failed(
@@ -193,7 +212,7 @@ def test_api_handlers_return_contracts_for_articles_trends_and_confirm(session_f
     list_body = list_articles(product="豆粕", page=1, page_size=20, session=api_session)
     assert list_body["code"] == 0
     assert len(list_body["data"]) == 1
-    assert list_body["data"][0]["summary"] == "震荡整理"
+    assert list_body["data"][0]["summary"] == "豆粕中性 0.45"
     assert list_body["data"][0]["publish_time"] == "2026-07-02"
 
     products_body = get_products(session=api_session)
@@ -209,6 +228,8 @@ def test_api_handlers_return_contracts_for_articles_trends_and_confirm(session_f
     detail_body = get_article_detail(article.id, session=api_session)
     assert detail_body["data"]["text"]["cleaned_text"] == "cleaned"
     assert detail_body["data"]["task_logs"][0]["stage"] == "llm"
+    assert len(detail_body["data"]["analysis_results"]) == 1
+    assert detail_body["data"]["analysis_result"]["product"] == "豆粕"
 
     trends_body = get_trends(product="豆粕", session=api_session)
     assert trends_body["data"][0]["product"] == "豆粕"
@@ -232,6 +253,7 @@ def test_api_handlers_return_contracts_for_articles_trends_and_confirm(session_f
     assert confirmed_detail["data"]["analysis_result"]["direction"] == "看涨"
     assert confirmed_detail["data"]["analysis_result"]["analysis_method"] == "manual"
     assert confirmed_detail["data"]["analysis_result"]["need_manual_review"] is False
+    assert confirmed_detail["data"]["analysis_results"][0]["direction"] == "看涨"
     api_session.close()
 
 

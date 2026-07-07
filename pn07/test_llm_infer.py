@@ -98,6 +98,20 @@ def test_json_parse_normal():
     assert data["confidence"] == 0.85
 
 
+def test_json_parse_multi_results():
+    raw = (
+        '{"results":['
+        '{"product":"原油","contract":"","direction":"看涨","reason":"供应风险","confidence":0.82},'
+        '{"product":"沪铜","contract":"2505","direction":"看跌","reason":"需求偏弱","confidence":0.66}'
+        ']}'
+    )
+    data, errors = parse_llm_json(raw)
+    assert errors == []
+    assert len(data["results"]) == 2
+    assert data["product"] == "原油"
+    assert data["results"][1]["contract"] == "2505"
+
+
 def test_json_parse_markdown_wrap():
     raw = '```json\n{"product":"沪铜","direction":"看跌","reason":"需求偏弱","confidence":0.7}\n```'
     data, errors = parse_llm_json(raw)
@@ -195,6 +209,37 @@ def test_full_infer_high_conf(session_factory):
     article = repo.get_article_detail(aid)
     assert article.status == ArticleProcessingStatus.STORED.value
     assert article.analysis_result.analysis_method == "llm"
+    session2.close()
+
+
+def test_full_infer_multi_results(session_factory):
+    """Mock LLM 返回多品种 JSON → 多条结果入库。"""
+    from pn07.llm_infer import infer_article
+
+    session = session_factory()
+    aid = _create_article(session, "原油偏强，沪铜偏弱。", title="多品种日报")
+    session.close()
+
+    response = (
+        '{"results":['
+        '{"product":"原油","contract":"","direction":"看涨","reason":"供应风险升温","confidence":0.82},'
+        '{"product":"沪铜","contract":"","direction":"看跌","reason":"需求承压","confidence":0.61}'
+        ']}'
+    )
+    config = LLMConfig(api_key="sk-test", base_url="https://test.api",
+                       model="test-model", timeout_seconds=5)
+
+    session2 = session_factory()
+    with patch("pn07.llm_client.LLMAPIClient.chat", return_value=response):
+        result = infer_article(aid, session2, config=config)
+    session2.commit()
+
+    assert len(result.results) == 2
+    repo = ArticleRepository(session2)
+    article = repo.get_article_detail(aid)
+    assert article.status == ArticleProcessingStatus.STORED.value
+    assert {item.product for item in article.analysis_results} == {"原油", "沪铜"}
+    assert all(item.model_name == "test-model" for item in article.analysis_results)
     session2.close()
 
 

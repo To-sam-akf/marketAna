@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from back_end.app.core.database import get_session
 from back_end.app.core.responses import success_response
+from back_end.app.core.status import ArticleProcessingStatus
 from back_end.app.models import AnalysisResult, Article
 
 
@@ -30,6 +31,7 @@ def get_companies(session: Session = Depends(get_session)) -> dict:
     stmt = (
         select(AnalysisResult, Article)
         .join(Article, Article.id == AnalysisResult.article_id)
+        .where(Article.status == ArticleProcessingStatus.STORED.value)
         .order_by(Article.company.asc(), Article.publish_time.desc())
     )
 
@@ -49,10 +51,13 @@ def get_companies(session: Session = Depends(get_session)) -> dict:
         
         grouped[company].append({
             "article_id": article.id,
+            "result_id": result.id,
             "product": result.product,
+            "contract": result.contract,
             "direction": result.direction,
             "confidence": result.confidence,
             "date": date_source.date().isoformat() if date_source else "",
+            "need_manual_review": result.need_manual_review,
         })
 
     # 将分组字典转换为前端期望的列表格式

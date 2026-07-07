@@ -11,19 +11,25 @@ export type Direction = '看涨' | '看跌' | '中性'
 // ===== 单条预测 =====
 export interface Prediction {
   article_id: number
+  result_id?: number
   direction: Direction
   confidence: number
   company: string
   date: string
   reason?: string
+  contract?: string | null
+  need_manual_review?: boolean
 }
 
 export interface CompanyPrediction {
   article_id: number
+  result_id?: number
   product: string
+  contract?: string | null
   direction: Direction
   confidence: number
   date: string
+  need_manual_review?: boolean
 }
 
 // ===== 品种页面 =====
@@ -85,16 +91,44 @@ export interface ArticleDetail {
     parser_type: string | null
   } | null
   analysis_result: {
+    id?: number
     product: string
+    contract?: string | null
+    contract_key?: string
     direction: string
     reason: string | null
     confidence: number
     analysis_method: string
     need_manual_review: boolean
+    is_primary?: boolean
+    model_name?: string | null
+    llm_duration_ms?: number | null
+    llm_retry_count?: number | null
+    llm_error_msg?: string | null
     analysis_time: string | null
   } | null
+  analysis_results: AnalysisResultItem[]
   task_logs: TaskLogItem[]
   manual_confirmations: ManualConfirmationItem[]
+}
+
+export interface AnalysisResultItem {
+  id: number
+  article_id: number
+  product: string
+  contract: string | null
+  contract_key: string
+  direction: string
+  reason: string | null
+  confidence: number
+  analysis_method: string
+  need_manual_review: boolean
+  is_primary: boolean
+  model_name: string | null
+  llm_duration_ms: number | null
+  llm_retry_count: number | null
+  llm_error_msg: string | null
+  analysis_time: string | null
 }
 
 export interface TaskLogItem {

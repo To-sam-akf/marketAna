@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import type { ArticleDetail } from '../api/types'
+import type { ArticleDetail, Direction } from '../api/types'
 import { getArticleDetail } from '../api/client'
 import { DIRECTION_CONFIG } from '../api/types'
 import LoadingState from '../components/common/LoadingState.vue'
@@ -36,12 +36,18 @@ function goBack() {
   router.push('/articles')
 }
 
-const dirConfig = computed(() => {
-  const d = detail.value?.analysis_result?.direction
-  return d && DIRECTION_CONFIG[d as keyof typeof DIRECTION_CONFIG]
-    ? DIRECTION_CONFIG[d as '看涨' | '看跌' | '中性']
-    : null
-})
+const analysisResults = computed(() => detail.value?.analysis_results ?? (detail.value?.analysis_result ? [detail.value.analysis_result] : []))
+
+function directionConfig(direction: string) {
+  return DIRECTION_CONFIG[direction as Direction]
+}
+
+function methodLabel(method: string): string {
+  if (method === 'rule') return '规则引擎'
+  if (method === 'llm') return '大模型'
+  if (method === 'manual') return '人工'
+  return method
+}
 
 function statusLabel(status: number): string {
   const map: Record<string, string> = {
@@ -79,43 +85,42 @@ onMounted(fetchData)
       </div>
 
       <!-- 分析结果卡片 -->
-      <div v-if="detail.analysis_result" class="section-card result-card">
+      <div v-if="analysisResults.length" class="section-card result-card">
         <h2 class="section-title">分析结果</h2>
-        <div class="result-grid">
-          <div class="result-item">
-            <span class="result-label">品种</span>
-            <span class="result-value product-name">{{ detail.analysis_result.product }}</span>
+        <div class="results-table">
+          <div class="results-head">
+            <span>品种</span>
+            <span>方向</span>
+            <span>置信度</span>
+            <span>方式</span>
+            <span>状态</span>
           </div>
-          <div class="result-item">
-            <span class="result-label">方向</span>
+          <div
+            v-for="result in analysisResults"
+            :key="result.id ?? `${result.product}-${result.contract ?? ''}`"
+            class="result-row"
+          >
+            <div class="product-cell">
+              <strong>{{ result.product }}</strong>
+              <span v-if="result.contract" class="contract-tag">{{ result.contract }}</span>
+              <span v-if="result.is_primary" class="primary-tag">主</span>
+            </div>
             <span
-              v-if="dirConfig"
-              class="result-value direction-tag"
-              :style="{ background: dirConfig.bgColor, color: dirConfig.color }"
+              v-if="directionConfig(result.direction)"
+              class="direction-tag"
+              :style="{ background: directionConfig(result.direction).bgColor, color: directionConfig(result.direction).color }"
             >
-              {{ detail.analysis_result.direction }}
+              {{ result.direction }}
             </span>
-          </div>
-          <div class="result-item">
-            <span class="result-label">置信度</span>
-            <span class="result-value confidence-value" :class="detail.analysis_result.confidence < 0.5 ? 'low-confidence' : 'high-confidence'">
-              {{ (detail.analysis_result.confidence * 100).toFixed(0) }}%
+            <span class="confidence-value" :class="result.confidence < 0.5 ? 'low-confidence' : 'high-confidence'">
+              {{ (result.confidence * 100).toFixed(0) }}%
             </span>
+            <span>{{ methodLabel(result.analysis_method) }}</span>
+            <span :class="result.need_manual_review ? 'review-text' : 'ok-text'">
+              {{ result.need_manual_review ? '待确认' : '已确认' }}
+            </span>
+            <p v-if="result.reason" class="result-reason">{{ result.reason }}</p>
           </div>
-          <div class="result-item">
-            <span class="result-label">分析方式</span>
-            <span class="result-value">{{ detail.analysis_result.analysis_method === 'rule' ? '规则引擎' : detail.analysis_result.analysis_method === 'llm' ? '大模型' : '手动' }}</span>
-          </div>
-        </div>
-
-        <!-- 待人工确认标记 -->
-        <div v-if="detail.analysis_result.need_manual_review" class="review-warning">
-          ⚠️ 该结果置信度较低，<strong>待人工确认</strong>
-        </div>
-
-        <div v-if="detail.analysis_result.reason" class="reason-box">
-          <span class="reason-label">理由：</span>
-          <p class="reason-text">{{ detail.analysis_result.reason }}</p>
         </div>
       </div>
 
@@ -233,45 +238,70 @@ onMounted(fetchData)
   border-left: 4px solid #e74c3c;
 }
 
-.result-grid {
+.results-table {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 16px;
-  margin-bottom: 16px;
+  gap: 8px;
 }
 
-.result-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.results-head,
+.result-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.4fr) minmax(76px, 0.7fr) minmax(74px, 0.7fr) minmax(82px, 0.8fr) minmax(72px, 0.7fr);
+  gap: 12px;
+  align-items: center;
 }
 
-.result-label {
+.results-head {
   font-size: 12px;
   color: #999;
+  padding: 0 10px 4px;
 }
 
-.result-value {
-  font-size: 18px;
-  font-weight: 700;
+.result-row {
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 14px;
+}
+
+.product-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
   color: #1a1a2e;
 }
 
-.product-name {
+.contract-tag,
+.primary-tag {
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.contract-tag {
+  background: #f5f6fa;
+  color: #666;
+}
+
+.primary-tag {
+  background: #fce8e6;
   color: #e74c3c;
 }
 
 .direction-tag {
   display: inline-block;
-  padding: 2px 14px;
-  border-radius: 6px;
-  font-size: 16px;
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 13px;
   font-weight: 700;
   width: fit-content;
 }
 
 .confidence-value {
-  font-size: 20px;
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .high-confidence {
@@ -282,33 +312,31 @@ onMounted(fetchData)
   color: #e74c3c;
 }
 
-.review-warning {
-  background: #fff3cd;
-  border: 1px solid #ffc107;
-  border-radius: 8px;
-  padding: 10px 14px;
-  font-size: 14px;
-  color: #856404;
-  margin-bottom: 14px;
-}
-
-.reason-box {
-  background: #f8f9fa;
-  border-radius: 8px;
-  padding: 12px 16px;
-}
-
-.reason-label {
-  font-size: 13px;
+.review-text {
+  color: #e74c3c;
   font-weight: 600;
-  color: #555;
 }
 
-.reason-text {
-  font-size: 14px;
+.ok-text {
+  color: #27ae60;
+}
+
+.result-reason {
+  grid-column: 1 / -1;
+  font-size: 13px;
   color: #333;
-  margin: 6px 0 0;
+  margin: 2px 0 0;
   line-height: 1.6;
+}
+
+@media (max-width: 720px) {
+  .results-head {
+    display: none;
+  }
+
+  .result-row {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 /* 文本 */
