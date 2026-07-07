@@ -289,6 +289,65 @@ def test_structured_cleaner_keeps_semantic_numbers():
     assert "01-02 01-24" not in cleaned
 
 
+def test_structured_cleaner_drops_navigation_only_lines():
+    raw = (
+        "# 晨报\n"
+        "解析器: html\n\n"
+        "## 正文文本\n"
+        "晨报\n"
+        "日报\n"
+        "农产品\n"
+        "能源化工\n"
+        "有色金属\n"
+        "交易策略\n"
+        "尿素日报20250401\n"
+        "尿素库存下降，现货价格震荡偏强。\n"
+    )
+
+    cleaned, _stats = clean_text(raw, CleanConfig())
+
+    assert "尿素库存下降" in cleaned
+    assert "\n农产品\n" not in cleaned
+    assert "\n能源化工\n" not in cleaned
+    assert "尿素日报20250401" not in cleaned
+
+
+def test_clean_article_rejects_navigation_only_content(session_factory):
+    session = session_factory()
+    raw = (
+        "# 晨报\n"
+        "来源文件: data/example.html\n"
+        "解析器: html\n\n"
+        "## 正文文本\n"
+        "晨报\n"
+        "日报\n"
+        "农产品\n"
+        "能源化工\n"
+        "有色金属\n"
+        "黑色金属\n"
+        "金融期货\n"
+        "周报\n"
+        "月报\n"
+        "年报\n"
+        "交易策略\n"
+        "尿素日报20250331\n"
+        "尿素日报20250327\n"
+        "尿素日报20250401\n"
+    )
+    aid = _create_article_with_raw(session, raw)
+    session.close()
+
+    session2 = session_factory()
+    with pytest.raises(ValueError, match="未发现可分析正文"):
+        clean_article(aid, session2)
+    session2.commit()
+
+    article = ArticleRepository(session2).get_article_detail(aid)
+    assert article.status == ArticleProcessingStatus.FAILED.value
+    assert "目录、导航" in article.error_msg
+    session2.close()
+
+
 def test_structured_cleaner_table_keeps_headers_drops_numeric_rows():
     raw = (
         "# 价格表\n"

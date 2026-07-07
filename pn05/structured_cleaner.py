@@ -57,6 +57,12 @@ _SEMANTIC_HINTS = (
     "利多", "利空", "支撑", "压力", "风险", "关注",
 )
 
+_NAVIGATION_ONLY_LINES = {
+    "晨报", "日报", "周报", "月报", "年报",
+    "农产品", "能源化工", "有色金属", "黑色金属", "金融期货",
+    "商品期货", "股指期货", "国债期货", "交易策略",
+}
+
 
 def clean_text(text: str, config: CleanConfig) -> tuple[str, StructuredCleanStats]:
     """清洗 raw_text，优先按 pn04 模板输出结构化 cleaned_text。"""
@@ -246,6 +252,9 @@ def _clean_semantic_lines(
         if stripped.startswith("[图片分片") and stripped.endswith("]"):
             stats.noise_lines_removed += 1
             continue
+        if _is_navigation_only_line(stripped):
+            stats.noise_lines_removed += 1
+            continue
         if config.drop_numeric_dominant_blocks and _is_numeric_dominant_noise(stripped, config, mode=mode):
             stats.numeric_blocks_removed += 1
             continue
@@ -358,6 +367,17 @@ def _has_semantic_signal(line: str) -> bool:
     if any(hint in line for hint in _SEMANTIC_HINTS):
         return True
     return _count_cjk(line) >= 7
+
+
+def _is_navigation_only_line(line: str) -> bool:
+    compact = re.sub(r"\s+", "", line)
+    if compact in _NAVIGATION_ONLY_LINES:
+        return True
+    if re.fullmatch(r"[\u4e00-\u9fff]{1,12}(日报|周报|月报|年报)\d{6,8}", compact):
+        return True
+    if re.fullmatch(r"【?[\u4e00-\u9fffA-Za-z]{1,12}(日报|周报|月报|年报)\d{6,8}】?", compact):
+        return True
+    return False
 
 
 def _repair_ocr_line(line: str) -> str:

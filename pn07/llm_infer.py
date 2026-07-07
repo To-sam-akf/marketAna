@@ -166,20 +166,26 @@ def infer_article(
 
     if not save_items:
         logger.warning("LLM 输出无可保存结果 article_id=%s: errors=%s", article_id, errors)
+        empty_reason = (
+            f"LLM 推理结果不可解析。{' ;'.join(errors)}"
+            if errors
+            else "LLM 未识别到可分析的期货观点，文本可能仅包含目录、导航或免责声明。"
+        )
+        empty_error = "; ".join(errors) if errors else "LLM 返回 results 为空"
         infer_items = [InferItem(product="未知", direction="中性", confidence=0.0, need_manual_review=True)]
         save_items = [
             {
                 "product": "未知",
                 "contract": None,
                 "direction": "中性",
-                "reason": f"LLM 推理结果不可解析。{' ;'.join(errors)}",
+                "reason": empty_reason,
                 "confidence": 0.0,
                 "analysis_method": "llm",
                 "need_manual_review": True,
                 "model_name": config.model,
                 "llm_duration_ms": elapsed,
                 "llm_retry_count": retry_count,
-                "llm_error_msg": last_error or "; ".join(errors),
+                "llm_error_msg": last_error or empty_error,
             }
         ]
 

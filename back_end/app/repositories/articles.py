@@ -5,10 +5,11 @@
 from datetime import datetime, time
 from typing import Any
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from back_end.app.core.exceptions import AppException, ErrorCode
+from back_end.app.core.display import displayable_product_clause
 from back_end.app.core.status import ARTICLE_STATUS_VALUES, ArticleProcessingStatus
 from back_end.app.models import (
     ANALYSIS_METHOD_VALUES,
@@ -502,6 +503,7 @@ class ArticleRepository(BaseRepository):
                 .where(
                     Article.status == ArticleProcessingStatus.STORED.value,
                     AnalysisResult.need_manual_review.is_(True),
+                    displayable_product_clause(AnalysisResult.product),
                 )
             )
             or 0
@@ -510,7 +512,10 @@ class ArticleRepository(BaseRepository):
         direction_rows = self.session.execute(
             select(AnalysisResult.direction, func.count(AnalysisResult.id))
             .join(Article, Article.id == AnalysisResult.article_id)
-            .where(Article.status == ArticleProcessingStatus.STORED.value)
+            .where(
+                Article.status == ArticleProcessingStatus.STORED.value,
+                displayable_product_clause(AnalysisResult.product),
+            )
             .group_by(AnalysisResult.direction)
         ).all()
         direction_distribution = {direction: 0 for direction in DIRECTION_VALUES}
@@ -553,7 +558,10 @@ class ArticleRepository(BaseRepository):
                 func.count(AnalysisResult.id).label("count"),
             )
             .join(Article, Article.id == AnalysisResult.article_id)
-            .where(Article.status == ArticleProcessingStatus.STORED.value)
+            .where(
+                Article.status == ArticleProcessingStatus.STORED.value,
+                displayable_product_clause(AnalysisResult.product),
+            )
             .group_by("date", AnalysisResult.product, AnalysisResult.direction)
             .order_by("date", AnalysisResult.product)
         )
@@ -671,14 +679,29 @@ class ArticleRepository(BaseRepository):
 
         使用 relationship.any 过滤分析结果，避免一文多结果导致文章重复。
         """
-        stmt = select(Article)
+        displayable_clause = displayable_product_clause(AnalysisResult.product)
+        stmt = select(Article).where(Article.analysis_results.any(displayable_clause))
         if product:
-            stmt = stmt.where(Article.analysis_results.any(AnalysisResult.product == product))
+            stmt = stmt.where(
+                Article.analysis_results.any(
+                    and_(
+                        displayable_clause,
+                        AnalysisResult.product == product,
+                    )
+                )
+            )
         if company:
             stmt = stmt.where(Article.company == company)
         if direction:
             self._validate_direction(direction)
-            stmt = stmt.where(Article.analysis_results.any(AnalysisResult.direction == direction))
+            stmt = stmt.where(
+                Article.analysis_results.any(
+                    and_(
+                        displayable_clause,
+                        AnalysisResult.direction == direction,
+                    )
+                )
+            )
         if status is not None:
             if status not in ARTICLE_STATUS_VALUES:
                 raise AppException(
@@ -698,7 +721,12 @@ class ArticleRepository(BaseRepository):
                     Article.title.like(pattern),
                     Article.source.like(pattern),
                     Article.company.like(pattern),
-                    Article.analysis_results.any(AnalysisResult.reason.like(pattern)),
+                    Article.analysis_results.any(
+                        and_(
+                            displayable_clause,
+                            AnalysisResult.reason.like(pattern),
+                        )
+                    ),
                 )
             )
         return stmt

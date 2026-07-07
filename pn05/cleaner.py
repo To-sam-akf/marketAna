@@ -87,7 +87,9 @@ def clean_article(
 
         # 空结果检查
         if not text.strip():
-            raise ValueError("清洗后文本为空")
+            raise _handle_failure(repo, article_id, "清洗后文本为空")
+        if not _has_analyzable_content(text):
+            raise _handle_failure(repo, article_id, "清洗后未发现可分析正文，可能仅包含目录、导航或文档信息")
 
         # 截断保护
         if len(text) > config.max_text_length:
@@ -153,6 +155,33 @@ def _filter_low_density(text: str, config: CleanConfig) -> tuple[str, int]:
             kept.append(para)
 
     return "\n\n".join(kept), removed_chars
+
+
+def _has_analyzable_content(text: str) -> bool:
+    """Reject outputs that only contain metadata, headings, navigation, or report links."""
+    semantic_hints = (
+        "观点", "逻辑", "建议", "操作", "策略", "展望", "预测", "预计", "预期",
+        "价格", "上涨", "下跌", "上行", "下行", "偏强", "偏弱", "震荡",
+        "库存", "需求", "供应", "成本", "利润", "基差", "现货", "期货",
+        "利多", "利空", "支撑", "压力", "风险", "关注",
+    )
+    content_lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            continue
+        if line.startswith(("来源文件:", "解析器:")):
+            continue
+        content_lines.append(line)
+
+    content = "\n".join(content_lines)
+    if not content:
+        return False
+    if any(hint in content for hint in semantic_hints):
+        return True
+    return len(re.findall(r"[一-鿿]", content)) >= 30
 
 
 def _handle_failure(

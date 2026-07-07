@@ -272,6 +272,34 @@ def test_full_infer_low_conf(session_factory):
     session2.close()
 
 
+def test_full_infer_empty_results_marks_no_market_view(session_factory):
+    """LLM 返回空 results → 记录无可分析观点，而不是误报 JSON 不可解析。"""
+    from pn07.llm_infer import infer_article
+
+    session = session_factory()
+    aid = _create_article(session, "晨报 日报 农产品 能源化工 交易策略 尿素日报", title="目录页")
+    session.close()
+
+    config = LLMConfig(api_key="sk-test", base_url="https://test.api",
+                       model="test", timeout_seconds=5)
+
+    session2 = session_factory()
+    with patch("pn07.llm_client.LLMAPIClient.chat", return_value='{"results":[]}'):
+        result = infer_article(aid, session2, config=config)
+    session2.commit()
+
+    assert result.product == "未知"
+    assert result.direction == "中性"
+    assert result.need_manual_review is True
+
+    repo = ArticleRepository(session2)
+    article = repo.get_article_detail(aid)
+    assert article.status == ArticleProcessingStatus.STORED.value
+    assert "未识别到可分析的期货观点" in article.analysis_result.reason
+    assert article.analysis_result.llm_error_msg == "LLM 返回 results 为空"
+    session2.close()
+
+
 def test_full_infer_llm_failure(session_factory):
     """LLM 全部失败 → mark_failed。"""
     from pn07.llm_infer import infer_article

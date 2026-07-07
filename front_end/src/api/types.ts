@@ -106,10 +106,26 @@ export interface ArticleDetail {
     llm_retry_count?: number | null
     llm_error_msg?: string | null
     analysis_time: string | null
+    evidence?: AnalysisEvidence
   } | null
   analysis_results: AnalysisResultItem[]
   task_logs: TaskLogItem[]
   manual_confirmations: ManualConfirmationItem[]
+}
+
+export interface EvidenceExcerpt {
+  quote: string
+  source: 'cleaned_text' | 'raw_text' | 'analysis_reason'
+  start_char: number | null
+  end_char: number | null
+  match_type: 'reason' | 'keyword' | 'fallback'
+}
+
+export interface AnalysisEvidence {
+  summary: string
+  source: 'cleaned_text' | 'raw_text' | 'analysis_reason'
+  excerpts: EvidenceExcerpt[]
+  notes: string
 }
 
 export interface AnalysisResultItem {
@@ -129,6 +145,7 @@ export interface AnalysisResultItem {
   llm_retry_count: number | null
   llm_error_msg: string | null
   analysis_time: string | null
+  evidence?: AnalysisEvidence
 }
 
 export interface TaskLogItem {

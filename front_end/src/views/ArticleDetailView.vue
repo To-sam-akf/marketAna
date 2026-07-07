@@ -49,6 +49,20 @@ function methodLabel(method: string): string {
   return method
 }
 
+function sourceLabel(source: string): string {
+  if (source === 'cleaned_text') return '清洗文本'
+  if (source === 'raw_text') return '原始文本'
+  if (source === 'analysis_reason') return '分析理由'
+  return source
+}
+
+function matchLabel(matchType: string): string {
+  if (matchType === 'reason') return '理由匹配'
+  if (matchType === 'keyword') return '关键词匹配'
+  if (matchType === 'fallback') return '分析摘要'
+  return matchType
+}
+
 function statusLabel(status: number): string {
   const map: Record<string, string> = {
     '-1': '处理失败', '0': '未处理', '1': '解析完成', '2': '清洗完成',
@@ -119,7 +133,32 @@ onMounted(fetchData)
             <span :class="result.need_manual_review ? 'review-text' : 'ok-text'">
               {{ result.need_manual_review ? '待确认' : '已确认' }}
             </span>
-            <p v-if="result.reason" class="result-reason">{{ result.reason }}</p>
+            <div v-if="result.evidence || result.reason" class="evidence-panel">
+              <div class="evidence-head">
+                <span class="evidence-title">结论依据</span>
+                <span v-if="result.evidence" class="evidence-source">{{ sourceLabel(result.evidence.source) }}</span>
+              </div>
+              <p v-if="result.evidence?.summary || result.reason" class="evidence-summary">
+                {{ result.evidence?.summary || result.reason }}
+              </p>
+              <div v-if="result.evidence?.excerpts?.length" class="evidence-list">
+                <figure
+                  v-for="excerpt in result.evidence.excerpts.slice(0, 3)"
+                  :key="`${excerpt.source}-${excerpt.start_char}-${excerpt.end_char}-${excerpt.quote}`"
+                  class="evidence-excerpt"
+                >
+                  <blockquote>{{ excerpt.quote }}</blockquote>
+                  <figcaption>
+                    <span>{{ sourceLabel(excerpt.source) }}</span>
+                    <span>{{ matchLabel(excerpt.match_type) }}</span>
+                    <span v-if="excerpt.start_char !== null && excerpt.end_char !== null">
+                      {{ excerpt.start_char }}-{{ excerpt.end_char }}
+                    </span>
+                  </figcaption>
+                </figure>
+              </div>
+              <p v-if="result.evidence?.notes" class="evidence-note">{{ result.evidence.notes }}</p>
+            </div>
           </div>
         </div>
       </div>
@@ -127,20 +166,6 @@ onMounted(fetchData)
       <div v-else class="section-card">
         <h2 class="section-title">分析结果</h2>
         <p class="no-data">暂无分析结果</p>
-      </div>
-
-      <!-- 清洗文本 -->
-      <div v-if="detail.text?.cleaned_text" class="section-card">
-        <h2 class="section-title">清洗文本</h2>
-        <p class="cleaned-text">{{ detail.text.cleaned_text }}</p>
-      </div>
-
-      <!-- 原始文本 -->
-      <div v-if="detail.text?.raw_text" class="section-card">
-        <h2 class="section-title">原始文本
-          <span class="text-meta">（{{ detail.text.parser_type }} · {{ detail.text.raw_length }}字 → {{ detail.text.cleaned_length }}字）</span>
-        </h2>
-        <pre class="raw-text">{{ detail.text.raw_text }}</pre>
       </div>
 
     </template>
@@ -224,13 +249,6 @@ onMounted(fetchData)
   font-weight: 600;
   color: #1a1a2e;
   margin: 0 0 16px;
-}
-
-.text-meta {
-  font-size: 12px;
-  font-weight: 400;
-  color: #aaa;
-  margin-left: 8px;
 }
 
 /* 分析结果 */
@@ -321,12 +339,77 @@ onMounted(fetchData)
   color: #27ae60;
 }
 
-.result-reason {
+.evidence-panel {
   grid-column: 1 / -1;
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.evidence-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.evidence-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1a1a2e;
+}
+
+.evidence-source {
+  flex: 0 0 auto;
+  border-radius: 4px;
+  background: #f5f6fa;
+  color: #666;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+}
+
+.evidence-summary {
   font-size: 13px;
   color: #333;
-  margin: 2px 0 0;
+  margin: 0;
   line-height: 1.6;
+}
+
+.evidence-list {
+  display: grid;
+  gap: 8px;
+}
+
+.evidence-excerpt {
+  border-left: 3px solid #e74c3c;
+  background: #fafafa;
+  border-radius: 6px;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.evidence-excerpt blockquote {
+  margin: 0;
+  color: #333;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.evidence-excerpt figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  color: #999;
+  font-size: 12px;
+}
+
+.evidence-note {
+  color: #888;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
 }
 
 @media (max-width: 720px) {
@@ -337,28 +420,6 @@ onMounted(fetchData)
   .result-row {
     grid-template-columns: 1fr 1fr;
   }
-}
-
-/* 文本 */
-.cleaned-text {
-  font-size: 14px;
-  color: #333;
-  line-height: 1.8;
-  margin: 0;
-}
-
-.raw-text {
-  font-size: 13px;
-  color: #555;
-  line-height: 1.6;
-  background: #f8f9fa;
-  padding: 12px 16px;
-  border-radius: 8px;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  max-height: 300px;
-  overflow-y: auto;
-  margin: 0;
 }
 
 .no-data {
