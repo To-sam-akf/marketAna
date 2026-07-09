@@ -29,6 +29,28 @@ const activeResult = computed(() => {
   return allResults.value.find((r) => r.product === activeProduct.value) ?? allResults.value[0] ?? null
 })
 
+// 结论依据：从 refined_text 中截取"核心正文"或"图文识别正文"之后的内容
+const evidenceText = computed(() => {
+  const text = detail.value?.text?.refined_text || ''
+  if (!text) return ''
+
+  // 按顺序尝试几个标记词，找到第一个出现的
+  const markers = ['核心正文', '图文识别正文', '观点及操作策略', '观点及策略']
+  let startIdx = -1
+  for (const marker of markers) {
+    const idx = text.indexOf(marker)
+    if (idx !== -1) {
+      startIdx = idx
+      break
+    }
+  }
+
+  if (startIdx !== -1) {
+    return text.slice(startIdx)
+  }
+  return text
+})
+
 // 其他品种（本研报还覆盖）
 const otherResults = computed(() =>
   allResults.value.filter((r) => r.product !== activeResult.value?.product)
@@ -121,9 +143,9 @@ onMounted(fetchData)
         <p class="focus-reason">{{ activeResult.reason || activeResult.evidence?.summary || '暂无理由' }}</p>
 
         <!-- 结论依据 -->
-        <div v-if="detail.text?.refined_text" class="evidence-section">
+        <div v-if="evidenceText" class="evidence-section">
           <h3 class="evidence-heading">结论依据</h3>
-          <div class="refined-text">{{ detail.text.refined_text }}</div>
+          <div class="refined-text">{{ evidenceText }}</div>
         </div>
       </div>
 
