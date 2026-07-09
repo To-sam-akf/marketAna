@@ -12,7 +12,6 @@ const router = useRouter()
 const detail = ref<ArticleDetail | null>(null)
 const loading = ref(true)
 const error = ref('')
-const showRawText = ref(false)
 
 const articleId = computed(() => Number(route.params.id))
 const activeProduct = computed(() => (route.query.product as string) || '')
@@ -30,8 +29,6 @@ const activeResult = computed(() => {
   return allResults.value.find((r) => r.product === activeProduct.value) ?? allResults.value[0] ?? null
 })
 
-const displayText = computed(() => detail.value?.text?.refined_text || detail.value?.text?.cleaned_text || '')
-
 // 其他品种（本研报还覆盖）
 const otherResults = computed(() =>
   allResults.value.filter((r) => r.product !== activeResult.value?.product)
@@ -46,20 +43,6 @@ function methodLabel(method: string): string {
   if (method === 'llm') return '大模型'
   if (method === 'manual') return '人工'
   return method
-}
-
-function sourceLabel(source: string): string {
-  if (source === 'cleaned_text') return '清洗文本'
-  if (source === 'raw_text') return '原始文本'
-  if (source === 'analysis_reason') return '分析理由'
-  return source
-}
-
-function matchLabel(mt: string): string {
-  if (mt === 'reason') return '理由匹配'
-  if (mt === 'keyword') return '关键词匹配'
-  if (mt === 'fallback') return '分析摘要'
-  return mt
 }
 
 function switchProduct(product: string) {
@@ -138,26 +121,9 @@ onMounted(fetchData)
         <p class="focus-reason">{{ activeResult.reason || activeResult.evidence?.summary || '暂无理由' }}</p>
 
         <!-- 结论依据 -->
-        <div v-if="activeResult.evidence || activeResult.reason" class="evidence-section">
+        <div v-if="detail.text?.refined_text" class="evidence-section">
           <h3 class="evidence-heading">结论依据</h3>
-
-          <div v-if="activeResult.evidence?.excerpts?.length" class="excerpt-list">
-            <figure
-              v-for="(excerpt, i) in activeResult.evidence.excerpts.slice(0, 3)"
-              :key="i"
-              class="excerpt-item"
-            >
-              <blockquote>{{ excerpt.quote }}</blockquote>
-              <figcaption>
-                <span>{{ sourceLabel(excerpt.source) }}</span>
-                <span>{{ matchLabel(excerpt.match_type) }}</span>
-              </figcaption>
-            </figure>
-          </div>
-
-          <p v-if="activeResult.evidence?.notes" class="evidence-note">
-            {{ activeResult.evidence.notes }}
-          </p>
+          <div class="refined-text">{{ detail.text.refined_text }}</div>
         </div>
       </div>
 
@@ -186,17 +152,6 @@ onMounted(fetchData)
         </div>
       </div>
 
-      <!-- 完整研报文本（折叠） -->
-      <div v-if="displayText || detail.text?.raw_text" class="raw-section">
-        <button class="raw-toggle" @click="showRawText = !showRawText">
-          {{ showRawText ? '收起完整研报文本' : '查看完整研报文本' }}
-          <span class="toggle-arrow">{{ showRawText ? '▲' : '▼' }}</span>
-        </button>
-        <div v-if="showRawText" class="raw-content">
-          <p v-if="displayText" class="clean-text">{{ displayText }}</p>
-          <pre v-if="detail.text?.raw_text" class="raw-text">{{ detail.text.raw_text }}</pre>
-        </div>
-      </div>
     </template>
 
     <!-- 无分析结果 -->
@@ -333,39 +288,12 @@ onMounted(fetchData)
   margin: 0 0 12px;
 }
 
-.excerpt-list {
-  display: grid;
-  gap: 10px;
-}
-
-.excerpt-item {
-  margin: 0;
-  border-left: 3px solid #e74c3c;
-  background: #fafafa;
-  border-radius: 6px;
-  padding: 10px 14px;
-}
-
-.excerpt-item blockquote {
-  margin: 0;
-  font-size: 13px;
+.refined-text {
+  font-size: 14px;
   color: #333;
-  line-height: 1.7;
-}
-
-.excerpt-item figcaption {
-  display: flex;
-  gap: 10px;
-  margin-top: 6px;
-  font-size: 12px;
-  color: #999;
-}
-
-.evidence-note {
-  margin: 10px 0 0;
-  font-size: 12px;
-  color: #888;
-  line-height: 1.5;
+  line-height: 1.9;
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
 /* 本研报还覆盖 */
@@ -424,62 +352,6 @@ onMounted(fetchData)
 }
 
 /* 完整研报文本 */
-.raw-section {
-  background: #fff;
-  border-radius: 12px;
-  border: 1px solid #f0f0f0;
-  margin-bottom: 16px;
-}
-
-.raw-toggle {
-  width: 100%;
-  background: none;
-  border: none;
-  padding: 14px 20px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #555;
-  cursor: pointer;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  transition: background 0.15s;
-  border-radius: 12px;
-}
-
-.raw-toggle:hover {
-  background: #fafafa;
-}
-
-.toggle-arrow {
-  font-size: 12px;
-  color: #bbb;
-}
-
-.raw-content {
-  padding: 0 20px 16px;
-}
-
-.clean-text {
-  font-size: 14px;
-  color: #333;
-  line-height: 1.8;
-  margin: 0 0 12px;
-}
-
-.raw-text {
-  font-size: 13px;
-  color: #555;
-  line-height: 1.6;
-  background: #f8f9fa;
-  padding: 12px 16px;
-  border-radius: 8px;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  max-height: 400px;
-  overflow-y: auto;
-  margin: 0;
-}
 
 /* 空状态 */
 .empty-card {
