@@ -8,6 +8,7 @@
 - 用 `article_texts` 保存一篇文章的原始文本和清洗后文本。
 - 用 `article_product_segments` 保存按品种切分后的正文片段，供分析依据、LLM 精修和前端详情页展示使用。
 - 用 `analysis_results` 保存当前有效分析结果，一篇文章可包含多个品种/合约观点，供前端页面、趋势图和统计查询使用。
+- 用 `analysis_review_queue` 保存冲突、证据缺失、未知品种和解析失败等不能写入正式结果的项目。
 - 用 `task_logs` 记录解析、清洗、规则识别、LLM 推理等流水线阶段日志。
 - 用 `manual_confirmations` 保存人工修正确认记录，保留修改前后对比，满足审计需求。
 - 用 `product_resolutions` 保存文章内未知品种的归一化与人工确认记录。
@@ -191,6 +192,7 @@
 | `confidence` | `Float` | 是 | 无 | 置信度，范围 `0-1` |
 | `analysis_method` | `String(32)` | 是 | 无 | `rule`、`llm`、`manual` |
 | `need_manual_review` | `Boolean` | 是 | `False` | 是否需要人工确认 |
+| `evidence_json` | `JSON` | 否 | `NULL` | canonical result 的结构化证据与字符位置 |
 | `is_primary` | `Boolean` | 是 | `False` | 是否为文章兼容主结果 |
 | `model_name` | `String(128)` | 否 | `NULL` | LLM 模型名称 |
 | `llm_duration_ms` | `Integer` | 否 | `NULL` | LLM 调用耗时 |
@@ -204,7 +206,7 @@
 
 | 名称 | 类型 | 字段 | 说明 |
 | --- | --- | --- | --- |
-| `uq_analysis_results_article_product_contract` | UniqueConstraint | `article_id`, `product`, `contract_key` | 同一文章同一品种合约只保留一条当前有效结果 |
+| `uq_analysis_results_article_product_contract` | UniqueConstraint | `article_id`, `product_key`, `contract_key` | 同一文章同一标准品种合约只保留一条当前有效结果 |
 | `ck_analysis_results_direction` | CheckConstraint | `direction` | 限制方向枚举 |
 | `ck_analysis_results_confidence` | CheckConstraint | `confidence` | 限制置信度为 `0-1` |
 | `ck_analysis_results_method` | CheckConstraint | `analysis_method` | 限制分析方法枚举 |
@@ -296,7 +298,7 @@ articles
 
 ### 5.1 当前分析结果按品种/合约保留
 
-`analysis_results` 使用 `(article_id, product, contract_key)` 唯一约束，表示一篇文章可保留多条当前有效结果，但同一品种合约重跑时更新旧结果。
+`analysis_results` 使用 `(article_id, product_key, contract_key)` 唯一约束，表示一篇文章可保留多条当前有效结果，但同一标准品种合约重跑时更新旧结果。`product` 只是展示名称。
 
 理由：
 
@@ -366,7 +368,7 @@ articles
 当前测试覆盖在 [tests/test_backend_data.py](/home/sanmu/marketANA/tests/test_backend_data.py)：
 
 - 核心表能创建成功。
-- `analysis_results` 存在 `(article_id, product, contract_key)` 唯一约束。
+- `analysis_results` 存在 `(article_id, product_key, contract_key)` 唯一约束。
 - `articles.status` 非法值会触发约束错误。
 - 状态流转、失败日志、分析结果幂等覆盖可用。
 - 统计、趋势、列表、详情、人工确认接口契约可用。

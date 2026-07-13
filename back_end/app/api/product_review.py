@@ -7,7 +7,7 @@ from back_end.app.api.schemas import ProductAliasReviewRequest, ProductResolutio
 from back_end.app.core.database import get_session
 from back_end.app.core.responses import success_response
 from back_end.app.repositories import ProductRepository
-from pn06.product_catalog import PRODUCT_CATALOG, get_product
+from data_proccessing.catalog import PRODUCT_CATALOG, get_product
 
 router = APIRouter(tags=["product-review"])
 

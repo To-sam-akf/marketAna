@@ -44,6 +44,12 @@ uv run python -m scripts.init_db
 mysql -u marketana -p marketana < scripts/migrate_product_resolution_20260710.sql
 ```
 
+如需启用独立数据处理流水线的结构化证据和复核队列，再执行一次 canonical 结果迁移：
+
+```bash
+mysql -u marketana -p marketana < scripts/migrate_canonical_result.sql
+```
+
 ### 3. 导入本地数据文件
 
 预览将要插入 `articles` 表的文件：
@@ -229,6 +235,43 @@ LLM_TIMEOUT_SECONDS=300  # 单次请求最多等待秒数
 LLM_MAX_RETRIES=1        # 超时/5xx/429 后最多重试次数
 ```
 
-前端 `/product-review` 提供“未知片段”和“别名候选”两级审核。未知片段确认后只修正当前文章并重新分析；新别名批准后才参与后续文章的全局匹配。
+没有正式分析结果的文章会直接展示人工复核队列和触发证据。审核人员可以驳回误识别、重新解析，或在填写完整方向、理由和证据后创建正式人工结论；已驳回状态不会被流水线重跑覆盖。
 
 如果日志出现 `请求超时`，通常表示模型服务在该时间内没有返回结果。可以适当增大 `LLM_TIMEOUT_SECONDS`，或减小批量处理数量，避免多篇文章连续等待。
+
+
+```mermaid
+flowchart TD
+    A[本地研报文件<br/>PDF / HTML / 图片] --> B[scripts/ingest_files.py<br/>导入 articles 表]
+
+    B --> C[(MySQL<br/>articles / article_texts<br/>segments / results / logs)]
+
+    C --> D[FastAPI 后端<br/>back_end/app/main.py]
+
+    D --> E[pn03 Scheduler<br/>定时扫描 status=0]
+    D --> F[/api/tasks/run<br/>手动触发]
+
+    E --> G[pn11 Pipeline<br/>端到端编排]
+    F --> G
+
+    G --> H[pn04 Parser<br/>解析文件为 raw_text]
+    H --> I[pn05 Cleaner<br/>清洗为 cleaned_text]
+    I --> J[pn05 Product Segmenter<br/>按品种切分片段]
+    J --> K[pn06 Product Resolver<br/>未知品种归一化]
+    K --> L[pn05 Refiner<br/>LLM 精修展示文本]
+    L --> M[pn06 Rule Engine<br/>规则判断方向/置信度]
+    M -->|低置信度| N[pn07 LLM Infer<br/>LLM 深度分析]
+    M -->|高置信度| O[(analysis_results)]
+    N --> O
+
+    O --> C
+    K --> P[(product_resolutions<br/>待人工审核)]
+    P --> C
+
+    C --> Q[Repositories<br/>back_end/app/repositories]
+    Q --> R[API Routers<br/>articles/products/trends<br/>companies/dashboard/review]
+    R --> S[Serializers<br/>back_end/app/api/serializers.py]
+    S --> T[Vue 前端<br/>front_end/src/views]
+
+    T --> U[产品页 / 公司页 / 趋势热力图<br/>文章详情 / 人工审核]
+```

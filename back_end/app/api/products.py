@@ -3,12 +3,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from back_end.app.core.database import get_session
-from back_end.app.core.display import displayable_product_clause
+from back_end.app.core.display import formal_analysis_clause
 from back_end.app.core.responses import success_response
 from back_end.app.core.status import ArticleProcessingStatus
 from back_end.app.models import AnalysisResult, Article 
 from pn05.display_cleaner import clean_display_text
-from pn06.product_catalog import product_group
+from data_proccessing.catalog import product_group
 
 router = APIRouter(prefix="/api/products", tags=["products"])
 
@@ -19,7 +19,7 @@ def get_products(session: Session = Depends(get_session)) -> dict:
         .join(Article, Article.id == AnalysisResult.article_id)
         .where(
             Article.status == ArticleProcessingStatus.STORED.value,
-            displayable_product_clause(AnalysisResult.product),
+            formal_analysis_clause(AnalysisResult),
         )
         .order_by(AnalysisResult.product.asc(), Article.publish_time.desc())
     )

@@ -6,6 +6,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+import re
 from typing import Iterable
 
 from sqlalchemy import select
@@ -127,18 +128,15 @@ def extract_metadata(path: Path, root: Path, base_dir: Path | None = None) -> Fi
 
 
 def parse_publish_time(path: Path, root: Path) -> datetime | None:
-    try:
-        relative = path.resolve().relative_to(root.resolve())
-    except ValueError:
-        return None
-    if not relative.parts:
-        return None
-
-    first_part = relative.parts[0]
-    try:
-        return datetime.strptime(first_part, "%Y%m%d")
-    except ValueError:
-        return None
+    # Accept both ``--root data`` and ``--root data/20250401``.  In the
+    # latter form the date is the root directory itself, not a child.
+    for part in reversed(path.resolve().parts):
+        if re.fullmatch(r"\d{8}", part):
+            try:
+                return datetime.strptime(part, "%Y%m%d")
+            except ValueError:
+                continue
+    return None
 
 
 def existing_file_urls(session: Session) -> set[str]:

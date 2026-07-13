@@ -23,6 +23,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    JSON,
 )
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -106,6 +107,10 @@ class Article(Base):
         cascade="all, delete-orphan",  # 一对多
     )
     manual_confirmations: Mapped[list["ManualConfirmation"]] = relationship(
+        back_populates="article",
+        cascade="all, delete-orphan",
+    )
+    review_queue: Mapped[list["AnalysisReviewQueue"]] = relationship(
         back_populates="article",
         cascade="all, delete-orphan",
     )
@@ -220,7 +225,7 @@ class AnalysisResult(Base):
     __tablename__ = "analysis_results"
     __table_args__ = (
         # 一篇文章可对应多个品种/合约结果，同一品种合约保持当前有效结果唯一
-        UniqueConstraint("article_id", "product", "contract_key", name="uq_analysis_results_article_product_contract"),
+        UniqueConstraint("article_id", "product_key", "contract_key", name="uq_analysis_results_article_product_contract"),
         # 方向字段必须在合法枚举值内
         CheckConstraint(
             f"direction in {DIRECTION_VALUES}",
@@ -258,6 +263,7 @@ class AnalysisResult(Base):
     confidence: Mapped[float] = mapped_column(Float, nullable=False)        # 置信度（0~1）
     analysis_method: Mapped[str] = mapped_column(String(32), nullable=False) # 分析方法（rule/llm/manual）
     need_manual_review: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # 是否需要人工复核
+    evidence_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # 是否为文章主结果
     model_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     llm_duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -281,6 +287,32 @@ class AnalysisResult(Base):
     )
     # 关联Article表的analysis_result属性，建立一对一关系
     article: Mapped[Article] = relationship(back_populates="analysis_results")
+
+
+class AnalysisReviewQueue(Base):
+    """Persisted non-formal outcomes from the canonical pipeline."""
+
+    __tablename__ = "analysis_review_queue"
+    __table_args__ = (
+        UniqueConstraint("article_id", "item_key", name="uq_analysis_review_queue_item"),
+        Index("ix_analysis_review_queue_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    article_id: Mapped[int] = mapped_column(ForeignKey("articles.id", ondelete="CASCADE"), nullable=False, index=True)
+    item_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    product_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    product: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    reason: Mapped[str] = mapped_column(String(128), nullable=False)
+    evidence_json: Mapped[dict | list | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    article: Mapped[Article] = relationship(back_populates="review_queue")
 
 
 class TaskLog(Base):

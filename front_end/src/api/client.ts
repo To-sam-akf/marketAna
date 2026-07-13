@@ -5,9 +5,6 @@ import type {
   HeatmapData,
   ArticleItem,
   ArticleDetail,
-  ProductCatalogItem,
-  ProductResolutionItem,
-  ProductAliasItem,
 } from './types'
 
 // 把 ../mock/products.json 这个 JSON 文件当成一个模块导入，并赋值给变量 productsMock。
@@ -77,32 +74,27 @@ export async function getArticleDetail(id: number): Promise<ApiResponse<ArticleD
   return fetchApi(`/api/articles/${id}`)
 }
 
-export function getProductCatalog(): Promise<ApiResponse<ProductCatalogItem[]>> {
-  return fetchApi('/api/product-catalog')
-}
-
-export function getPendingProductResolutions(): Promise<ApiResponse<ProductResolutionItem[]>> {
-  return fetchApi('/api/product-resolutions?status=pending')
-}
-
-export function confirmProductResolution(
-  id: number,
-  productKey: string,
-): Promise<ApiResponse<ProductResolutionItem>> {
-  return postApi(`/api/product-resolutions/${id}/confirm`, { product_key: productKey })
-}
-
-export function getPendingProductAliases(): Promise<ApiResponse<ProductAliasItem[]>> {
-  return fetchApi('/api/product-aliases?status=pending')
-}
-
-export function reviewProductAlias(
-  id: number,
-  action: 'approve' | 'reject',
-): Promise<ApiResponse<ProductAliasItem>> {
-  return postApi(`/api/product-aliases/${id}/${action}`)
-}
-
 export function runArticleTask(articleId: number): Promise<ApiResponse<Record<string, unknown>>> {
   return postApi('/api/tasks/run', { article_id: articleId })
+}
+
+export function rejectReviewItem(
+  reviewId: number,
+  note?: string,
+): Promise<ApiResponse<{ id: number; status: string }>> {
+  return postApi(`/api/review-items/${reviewId}/reject`, { reviewed_by: 'frontend', note })
+}
+
+export function createManualConclusion(
+  reviewId: number,
+  payload: { direction: string; reason: string; evidence: string; product?: string; product_key?: string },
+): Promise<ApiResponse<Record<string, unknown>>> {
+  return postApi(`/api/review-items/${reviewId}/conclusion`, { ...payload, reviewed_by: 'frontend' })
+}
+
+export function confirmResult(
+  resultId: number,
+  payload: { product: string; product_key?: string; direction: string; reason?: string; confidence: number; confirmed_by?: string },
+): Promise<ApiResponse<Record<string, unknown>>> {
+  return postApi(`/api/results/${resultId}/confirm`, payload)
 }

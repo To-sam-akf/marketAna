@@ -4,7 +4,7 @@ from back_end.app.api.schemas import datetime_to_iso
 from back_end.app.core.display import is_displayable_analysis_result
 from back_end.app.models import AnalysisResult, Article, ArticleProductSegment, ArticleText, ManualConfirmation, TaskLog
 from pn05.display_cleaner import clean_display_text
-from pn06.product_catalog import PRODUCT_CATALOG, ProductDefinition, get_product, product_group, product_key_for_name
+from data_proccessing.catalog import PRODUCT_CATALOG, ProductDefinition, get_product, product_group, product_key_for_name
 
 
 def get_displayable_analysis_results(article: Article) -> list[AnalysisResult]:
@@ -59,7 +59,7 @@ def serialize_analysis_result(
         "llm_retry_count": result.llm_retry_count,
         "llm_error_msg": result.llm_error_msg,
         "analysis_time": datetime_to_iso(result.analysis_time),
-        "evidence": build_segment_evidence(result, product_segments) or build_analysis_evidence(result, article_text),
+        "evidence": result.evidence_json or build_segment_evidence(result, product_segments) or build_analysis_evidence(result, article_text),
     }
 
 
@@ -164,6 +164,21 @@ def serialize_article_detail(article: Article) -> dict:
         "manual_confirmations": [
             serialize_manual_confirmation(confirmation)
             for confirmation in sorted(article.manual_confirmations, key=lambda item: item.id)
+        ],
+        "review_queue": [
+            {
+                "id": item.id,
+                "product_key": item.product_key,
+                "product": item.product,
+                "reason": item.reason,
+                "evidence": item.evidence_json,
+                "status": item.status,
+                "reviewed_by": item.reviewed_by,
+                "review_note": item.review_note,
+                "reviewed_at": datetime_to_iso(item.reviewed_at),
+                "created_at": datetime_to_iso(item.created_at),
+            }
+            for item in sorted(article.review_queue, key=lambda item: item.id)
         ],
     }
 

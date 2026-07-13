@@ -123,19 +123,20 @@ export interface ArticleDetail {
   analysis_results: AnalysisResultItem[]
   task_logs: TaskLogItem[]
   manual_confirmations: ManualConfirmationItem[]
+  review_queue?: ReviewQueueItem[]
 }
 
 export interface EvidenceExcerpt {
   quote: string
-  source: 'segment' | 'cleaned_text' | 'raw_text' | 'analysis_reason'
+  source: 'segment' | 'cleaned_text' | 'raw_text' | 'analysis_reason' | 'manual'
   start_char: number | null
   end_char: number | null
-  match_type: 'reason' | 'keyword' | 'fallback'
+  match_type: 'reason' | 'keyword' | 'fallback' | 'manual'
 }
 
 export interface AnalysisEvidence {
   summary: string
-  source: 'segment' | 'cleaned_text' | 'raw_text' | 'analysis_reason'
+  source: 'segment' | 'cleaned_text' | 'raw_text' | 'analysis_reason' | 'manual'
   section_type?: 'core' | 'ocr' | 'table' | 'ai' | 'mixed' | 'unknown'
   cleaned_text?: string
   refined_text?: string
@@ -151,10 +152,10 @@ export interface AnalysisResultItem {
   product_group?: string
   contract: string | null
   contract_key: string
-  direction: string
+  direction: Direction
   reason: string | null
   confidence: number
-  analysis_method: string
+  analysis_method: 'rule' | 'llm' | 'manual'
   need_manual_review: boolean
   is_primary: boolean
   model_name: string | null
@@ -163,6 +164,19 @@ export interface AnalysisResultItem {
   llm_error_msg: string | null
   analysis_time: string | null
   evidence?: AnalysisEvidence
+}
+
+export interface ReviewQueueItem {
+  id: number
+  product_key: string | null
+  product: string | null
+  reason: string
+  evidence: unknown
+  status: string
+  reviewed_by?: string | null
+  review_note?: string | null
+  reviewed_at?: string | null
+  created_at: string | null
 }
 
 export interface TaskLogItem {
@@ -191,49 +205,6 @@ export interface ManualConfirmationItem {
   confirmed_by: string | null
   note: string | null
   confirmed_at: string
-}
-
-export interface ProductCatalogItem {
-  product_key: string
-  display_name: string
-  official_name: string
-  exchange: string
-  symbol: string
-  product_group: string
-  active: boolean
-}
-
-export interface ProductResolutionItem {
-  id: number
-  article_id: number
-  article_title: string
-  raw_name: string
-  excerpt: string | null
-  suggested_product_key: string | null
-  suggested_product: string | null
-  resolved_product_key: string | null
-  resolved_product: string | null
-  confidence: number
-  method: string
-  status: string
-  reviewed_by: string | null
-  review_note: string | null
-  created_at: string
-  reanalysis_required?: boolean
-}
-
-export interface ProductAliasItem {
-  id: number
-  alias: string
-  product_key: string
-  product: string
-  product_group: string
-  status: string
-  occurrence_count: number
-  confidence: number
-  reviewed_by: string | null
-  review_note: string | null
-  created_at: string
 }
 
 // ===== 方向对应的颜色和标签 =====
