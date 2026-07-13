@@ -50,6 +50,27 @@ mysql -u marketana -p marketana < scripts/migrate_product_resolution_20260710.sq
 mysql -u marketana -p marketana < scripts/migrate_canonical_result.sql
 ```
 
+启用审核队列的审核人、驳回原因和审核时间字段：
+
+```bash
+docker compose exec -T mysql mysql -umarketana -pmarketana_password marketana \
+  < scripts/migrate_manual_review_20260713.sql
+```
+
+如果已经执行过旧版人工审核迁移，只需补充结构化驳回原因列：
+
+```bash
+docker compose exec -T mysql mysql -umarketana -pmarketana_password marketana \
+  < scripts/migrate_review_queue_upgrade_20260713.sql
+```
+
+异常发布日期可先预览、确认后修复：
+
+```bash
+uv run python scripts/repair_publish_times.py
+uv run python scripts/repair_publish_times.py --apply
+```
+
 ### 3. 导入本地数据文件
 
 预览将要插入 `articles` 表的文件：
@@ -232,10 +253,22 @@ LLM 调用较慢时可以调整：
 
 ```env
 LLM_TIMEOUT_SECONDS=300  # 单次请求最多等待秒数
-LLM_MAX_RETRIES=1        # 超时/5xx/429 后最多重试次数
+LLM_MAX_RETRIES=2        # 超时/网络错误/5xx/429/空 SSE 后最多重试次数
 ```
 
-没有正式分析结果的文章会直接展示人工复核队列和触发证据。审核人员可以驳回误识别、重新解析，或在填写完整方向、理由和证据后创建正式人工结论；已驳回状态不会被流水线重跑覆盖。
+前端 `/review-queue` 是内部审核工作台，按待审核、已完成、已驳回和处理异常归类文章。审核人员可以驳回误识别、重新解析整篇，或在填写标准品种、方向、理由和证据后创建正式人工结论；已驳回状态不会被流水线重跑覆盖。
+
+升级编号证据协议后，可先预览仍处于待审核且没有可展示证据的历史文章：
+
+```bash
+uv run python -m scripts.reprocess_missing_evidence --dry-run --limit 100
+```
+
+确认列表后再显式重跑。默认串行调用模型，可按服务容量调整并发数：
+
+```bash
+uv run python -m scripts.reprocess_missing_evidence --apply --limit 100 --concurrency 1
+```
 
 如果日志出现 `请求超时`，通常表示模型服务在该时间内没有返回结果。可以适当增大 `LLM_TIMEOUT_SECONDS`，或减小批量处理数量，避免多篇文章连续等待。
 

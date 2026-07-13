@@ -307,6 +307,7 @@ class AnalysisReviewQueue(Base):
     evidence_json: Mapped[dict | list | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
     reviewed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    review_reason_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())

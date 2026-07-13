@@ -2,6 +2,7 @@ import re
 
 from back_end.app.api.schemas import datetime_to_iso
 from back_end.app.core.display import is_displayable_analysis_result
+from back_end.app.core.review import clean_review_evidence, trigger_reason_label
 from back_end.app.models import AnalysisResult, Article, ArticleProductSegment, ArticleText, ManualConfirmation, TaskLog
 from pn05.display_cleaner import clean_display_text
 from data_proccessing.catalog import PRODUCT_CATALOG, ProductDefinition, get_product, product_group, product_key_for_name
@@ -171,9 +172,11 @@ def serialize_article_detail(article: Article) -> dict:
                 "product_key": item.product_key,
                 "product": item.product,
                 "reason": item.reason,
-                "evidence": item.evidence_json,
+                "reason_label": trigger_reason_label(item.reason),
+                "evidence": clean_review_evidence(item.evidence_json),
                 "status": item.status,
                 "reviewed_by": item.reviewed_by,
+                "review_reason_code": item.review_reason_code,
                 "review_note": item.review_note,
                 "reviewed_at": datetime_to_iso(item.reviewed_at),
                 "created_at": datetime_to_iso(item.created_at),

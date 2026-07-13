@@ -44,6 +44,29 @@ class DirectionSignal:
 
 
 @dataclass(frozen=True, slots=True)
+class EvidenceCandidate:
+    evidence_id: str
+    product_key: str
+    quote: str
+    raw_quote: str
+    source: str
+    start_char: int
+    end_char: int
+    match_type: str = "llm_candidate"
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceExcerpt:
+    quote: str
+    raw_quote: str
+    source: str
+    start_char: int
+    end_char: int
+    match_type: str
+    validated: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class ArbitrationResult:
     product_key: str
     display_name: str
@@ -69,6 +92,7 @@ class AnalysisResult:
     method: AnalysisMethod
     need_manual_review: bool = False
     evidence: tuple[str, ...] = ()
+    evidence_excerpts: tuple[EvidenceExcerpt, ...] = ()
     processing_stats: dict[str, Any] = field(default_factory=dict)
     contract: str | None = None
     contract_key: str = ""

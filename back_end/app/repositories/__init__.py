@@ -6,7 +6,7 @@ stack.  Existing ``from back_end.app.repositories import ...`` imports remain
 compatible through module ``__getattr__``.
 """
 
-__all__ = ["ArticleRepository", "ProductRepository"]
+__all__ = ["ArticleRepository", "ProductRepository", "ReviewQueueRepository"]
 
 
 def __getattr__(name: str):
@@ -18,4 +18,8 @@ def __getattr__(name: str):
         from back_end.app.repositories.products import ProductRepository
 
         return ProductRepository
+    if name == "ReviewQueueRepository":
+        from back_end.app.repositories.review_queue import ReviewQueueRepository
+
+        return ReviewQueueRepository
     raise AttributeError(name)

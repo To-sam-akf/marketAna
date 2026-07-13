@@ -35,7 +35,8 @@ class ProductAliasReviewRequest(BaseModel):
 
 
 class RejectAnalysisReviewRequest(BaseModel):
-    reviewed_by: str | None = Field(default=None, max_length=128)
+    reviewed_by: str = Field(min_length=1, max_length=128)
+    reason_code: str = Field(min_length=1, max_length=32)
     note: str | None = Field(default=None, max_length=2000)
 
 
@@ -43,9 +44,8 @@ class CreateManualConclusionRequest(BaseModel):
     direction: str
     reason: str = Field(min_length=1, max_length=10000)
     evidence: str = Field(min_length=1, max_length=20000)
-    product: str | None = Field(default=None, max_length=128)
-    product_key: str | None = Field(default=None, max_length=64)
-    reviewed_by: str | None = Field(default=None, max_length=128)
+    product_key: str = Field(min_length=1, max_length=64)
+    reviewed_by: str = Field(min_length=1, max_length=128)
 
 
 def datetime_to_iso(value: datetime | None) -> str | None:

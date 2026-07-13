@@ -54,7 +54,12 @@ def run_pipeline(article_id: int, session: Any) -> bool:
             article_id=article_id,
             stage="pipeline",
             status="success" if not processed.errors else "partial",
-            message=f"standalone pipeline completed; reviews={len(canonical['review_queue'])}",
+            message=(
+                f"standalone pipeline completed; reviews={len(canonical['review_queue'])}; "
+                f"llm_failures={len(processed.errors)}; "
+                f"llm_retries={processed.processing_stats.get('llm_retry_count', 0)}; "
+                f"llm_recovered={processed.processing_stats.get('llm_recovered_count', 0)}"
+            ),
             duration_ms=int((time.monotonic() - started) * 1000),
         )
         return True

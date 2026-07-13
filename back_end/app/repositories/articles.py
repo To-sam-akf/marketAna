@@ -10,6 +10,7 @@ from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from back_end.app.core.exceptions import AppException, ErrorCode
+from back_end.app.core.review import REVIEW_REASON_CODES
 from back_end.app.core.display import displayable_product_clause, formal_analysis_clause
 from back_end.app.core.status import ARTICLE_STATUS_VALUES, ArticleProcessingStatus
 from back_end.app.models import (
@@ -811,10 +812,18 @@ class ArticleRepository(BaseRepository):
         self,
         review_id: int,
         *,
-        reviewed_by: str | None = None,
+        reviewed_by: str,
+        reason_code: str,
         note: str | None = None,
     ) -> AnalysisReviewQueue:
         """Persist a false-positive decision; pipeline imports must not reopen it."""
+        reviewed_by = reviewed_by.strip()
+        if not reviewed_by or reason_code not in REVIEW_REASON_CODES:
+            raise AppException(
+                code=ErrorCode.VALIDATION_ERROR,
+                message="A reviewer and valid rejection reason are required",
+                detail={"reason_code": reason_code},
+            )
         item = self.session.scalar(
             select(AnalysisReviewQueue).where(AnalysisReviewQueue.id == review_id)
         )
@@ -833,6 +842,7 @@ class ArticleRepository(BaseRepository):
             )
         item.status = "rejected"
         item.reviewed_by = reviewed_by
+        item.review_reason_code = reason_code
         item.review_note = note
         item.reviewed_at = datetime.now()
         self.session.flush()
@@ -845,9 +855,8 @@ class ArticleRepository(BaseRepository):
         direction: str,
         reason: str,
         evidence: str,
-        product: str | None = None,
-        product_key: str | None = None,
-        reviewed_by: str | None = None,
+        product_key: str,
+        reviewed_by: str,
     ) -> AnalysisResult:
         """Create a formal result only from a complete, pending manual decision."""
         direction = direction.strip()
@@ -859,6 +868,12 @@ class ArticleRepository(BaseRepository):
                 code=ErrorCode.VALIDATION_ERROR,
                 message="Direction, reason and evidence are required",
                 detail={"review_id": review_id},
+            )
+        reviewed_by = reviewed_by.strip()
+        if not reviewed_by:
+            raise AppException(
+                code=ErrorCode.VALIDATION_ERROR,
+                message="Reviewer is required",
             )
         item = self.session.scalar(
             select(AnalysisReviewQueue).where(AnalysisReviewQueue.id == review_id)
@@ -876,14 +891,17 @@ class ArticleRepository(BaseRepository):
                 message="Only pending review items can create a conclusion",
                 detail={"review_id": review_id, "status": item.status},
             )
-        confirmed_product = (product or item.product or "").strip()
-        confirmed_key = (product_key or item.product_key or "").strip()
-        if not confirmed_product:
+        from data_proccessing.catalog import get_product
+
+        catalog_product = get_product(product_key.strip())
+        if catalog_product is None or not catalog_product.active or catalog_product.product_key.startswith("GROUP."):
             raise AppException(
                 code=ErrorCode.VALIDATION_ERROR,
-                message="A product is required for a formal conclusion",
-                detail={"review_id": review_id},
+                message="A valid active product is required for a formal conclusion",
+                detail={"review_id": review_id, "product_key": product_key},
             )
+        confirmed_product = catalog_product.display_name
+        confirmed_key = catalog_product.product_key
         result = self.save_analysis_result(
             item.article_id,
             product=confirmed_product,

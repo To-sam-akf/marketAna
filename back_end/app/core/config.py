@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     app_name: str = "MarketANA"
     app_env: str = "development"
     log_level: str = "INFO"
+    data_root: str = "data"
 
     database_url: str | None = None
 
@@ -16,7 +17,7 @@ class Settings(BaseSettings):
     llm_base_url: str | None = "https://swarm.wenhua.com.cn/aiservice/api/ShiXi/GetContent"
     llm_model: str | None = "wenhua-shixi"
     llm_timeout_seconds: int = 300
-    llm_max_retries: int = 1
+    llm_max_retries: int = 2
 
     task_batch_size: int = 20
     rule_confidence_threshold: float = Field(default=0.7, ge=0.0, le=1.0)

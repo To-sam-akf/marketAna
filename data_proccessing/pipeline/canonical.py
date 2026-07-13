@@ -6,8 +6,15 @@ from dataclasses import asdict
 import re
 from typing import Any, TYPE_CHECKING
 
-from data_proccessing.models import AnalysisResult, DirectionSignal
+from data_proccessing.llm.diagnostics import LLM_ERROR_TYPES
+from data_proccessing.models import (
+    AnalysisResult,
+    DirectionSignal,
+    EvidenceCandidate,
+    EvidenceExcerpt,
+)
 from data_proccessing.instrument_mapping.runtime import LexiconMatch
+from data_proccessing.sections import HEADING_PATTERN, build_product_sections, product_section_spans
 
 if TYPE_CHECKING:
     from data_proccessing.pipeline.processor import DocumentProcessingResult
@@ -88,6 +95,17 @@ def validate_canonical_result(payload: dict[str, Any]) -> None:
         confidence = item.get("confidence")
         if not isinstance(confidence, (int, float)) or not 0 <= float(confidence) <= 1:
             raise ValueError(f"results[{index}].confidence is invalid")
+    for index, item in enumerate(payload.get("review_queue") or []):
+        if not isinstance(item, dict):
+            raise ValueError(f"review_queue[{index}] must be an object")
+        evidence = item.get("evidence")
+        diagnostic = evidence.get("diagnostic") if isinstance(evidence, dict) else None
+        if diagnostic is None:
+            continue
+        if not isinstance(diagnostic, dict):
+            raise ValueError(f"review_queue[{index}].evidence.diagnostic must be an object")
+        if diagnostic.get("error_type") not in LLM_ERROR_TYPES:
+            raise ValueError(f"review_queue[{index}].evidence.diagnostic.error_type is invalid")
 
 
 def _result_to_dict(
@@ -98,15 +116,24 @@ def _result_to_dict(
     signals: list[DirectionSignal],
     matches: list[LexiconMatch],
 ) -> dict[str, Any]:
-    evidence = build_product_evidence(
-        product_key=item.product_key,
-        direction=item.direction,
-        cleaned_text=cleaned_text,
-        raw_text=raw_text,
-        signals=signals,
-        matches=matches,
-    )
-    reason = evidence["summary"]
+    if item.method == "llm":
+        evidence = build_validated_llm_evidence(
+            product_key=item.product_key,
+            raw_text=raw_text,
+            matches=matches,
+            excerpts=list(item.evidence_excerpts),
+        )
+        reason = item.reason
+    else:
+        evidence = build_product_evidence(
+            product_key=item.product_key,
+            direction=item.direction,
+            cleaned_text=cleaned_text,
+            raw_text=raw_text,
+            signals=signals,
+            matches=matches,
+        )
+        reason = evidence["summary"]
     return {
         "product_key": item.product_key,
         "product": item.product,
@@ -119,6 +146,10 @@ def _result_to_dict(
         "need_manual_review": bool(item.need_manual_review or not evidence["excerpts"]),
         "evidence": evidence,
         "metadata": dict(item.processing_stats),
+        "model_name": item.processing_stats.get("model_name"),
+        "llm_duration_ms": item.processing_stats.get("llm_duration_ms"),
+        "llm_retry_count": item.processing_stats.get("llm_retry_count"),
+        "llm_error_msg": item.processing_stats.get("llm_error_msg"),
     }
 
 
@@ -169,6 +200,9 @@ def build_product_evidence(
             end,
             quote,
             product_key,
+            signal.start,
+            signal.end,
+            product_matches,
             other_matches,
         ):
             continue
@@ -209,6 +243,7 @@ def build_product_evidence(
         "summary": reason,
         "source": source_name if excerpts else "analysis_reason",
         "section_type": "core",
+        "kind": "verified" if excerpts else "candidate_context",
         "excerpts": excerpts,
         "notes": (
             "证据来自当前 product_key 对应章节中的完整句子。"
@@ -218,7 +253,137 @@ def build_product_evidence(
     }
 
 
-_HEADING_PATTERN = re.compile(r"【\s*([^】\n]{1,40}?)\s*】")
+def build_evidence_candidates(
+    *,
+    product_key: str,
+    raw_text: str,
+    matches: list[LexiconMatch] | tuple[LexiconMatch, ...],
+    max_candidates: int = 6,
+    max_chars: int = 1200,
+) -> tuple[EvidenceCandidate, ...]:
+    """Build deterministic, source-addressable sentences for one product."""
+    all_matches = tuple(matches)
+    product_matches = tuple(match for match in all_matches if match.product_key == product_key)
+    spans = product_section_spans(
+        raw_text,
+        product_key=product_key,
+        product_matches=product_matches,
+        all_matches=all_matches,
+    )
+    sections = build_product_sections(raw_text, all_matches)
+    rows: list[tuple[int, int, str, str, bool, int]] = []
+    for section_start, section_end in spans:
+        section = next(
+            (
+                item for item in sections
+                if item.body_start == section_start and item.body_end == section_end
+            ),
+            None,
+        )
+        shared = bool(section and len(section.concrete_product_keys) > 1)
+        for start, end in _sentence_spans(raw_text, section_start, section_end):
+            raw_quote = raw_text[start:end]
+            quote = _clean_evidence_quote(raw_quote)
+            if not _is_candidate_quote(quote):
+                continue
+            target_in_sentence = any(start <= match.start < end for match in product_matches)
+            other_keys = {
+                match.product_key
+                for match in all_matches
+                if match.product_key != product_key and start <= match.start < end
+            }
+            # A sentence explicitly anchored only to another product is context
+            # for that product, not for the heading owner (e.g. 玉米淀粉 vs 玉米).
+            if other_keys and not target_in_sentence:
+                continue
+            if shared and not target_in_sentence:
+                continue
+            conclusion_score = sum(marker in quote for marker in _CONCLUSION_MARKERS)
+            rows.append((start, end, raw_quote, quote, target_in_sentence, conclusion_score))
+
+    ordered_source = sorted(rows, key=lambda item: (item[0], item[1]))
+    indexed = [
+        (f"E{index}", row)
+        for index, row in enumerate(ordered_source, start=1)
+    ]
+    ranked = sorted(
+        indexed,
+        key=lambda item: (
+            -item[1][5],
+            -int(item[1][4]),
+            item[1][0],
+        ),
+    )
+    selected: list[EvidenceCandidate] = []
+    used_chars = 0
+    for evidence_id, (start, end, raw_quote, quote, _target, _score) in ranked:
+        if len(quote) > max_chars or used_chars + len(quote) > max_chars:
+            continue
+        selected.append(
+            EvidenceCandidate(
+                evidence_id=evidence_id,
+                product_key=product_key,
+                quote=quote,
+                raw_quote=raw_quote,
+                source="raw_text",
+                start_char=start,
+                end_char=end,
+            )
+        )
+        used_chars += len(quote)
+        if len(selected) >= max_candidates:
+            break
+    return tuple(selected)
+
+
+def build_validated_llm_evidence(
+    *,
+    product_key: str,
+    raw_text: str,
+    matches: list[LexiconMatch] | tuple[LexiconMatch, ...],
+    excerpts: list[EvidenceExcerpt] | tuple[EvidenceExcerpt, ...],
+) -> dict[str, Any]:
+    product_matches = [match for match in matches if match.product_key == product_key]
+    sections = product_section_spans(
+        raw_text,
+        product_key=product_key,
+        product_matches=product_matches,
+        all_matches=matches,
+    )
+    valid: list[dict[str, Any]] = []
+    for excerpt in excerpts:
+        start = int(excerpt.start_char)
+        end = int(excerpt.end_char)
+        if not any(section_start <= start < end <= section_end for section_start, section_end in sections):
+            continue
+        if raw_text[start:end] != excerpt.raw_quote:
+            continue
+        valid.append(
+            {
+                "quote": excerpt.quote,
+                "raw_quote": excerpt.raw_quote,
+                "source": excerpt.source,
+                "start_char": start,
+                "end_char": end,
+                "match_type": excerpt.match_type,
+                "validated": True,
+            }
+        )
+    return {
+        "summary": " ".join(str(item["quote"]) for item in valid),
+        "source": "raw_text" if valid else "analysis_reason",
+        "section_type": "core",
+        "kind": "verified" if valid else "candidate_context",
+        "excerpts": valid,
+        "notes": (
+            "证据由大模型选择的编号还原，并通过原文位置校验。"
+            if valid
+            else "大模型未返回可精确回指当前品种章节的证据，需人工复核。"
+        ),
+    }
+
+
+_HEADING_PATTERN = HEADING_PATTERN
 _SENTENCE_ENDINGS = "。！？!?"
 _COMPARISON_MARKERS = (
     "跟随",
@@ -229,8 +394,37 @@ _COMPARISON_MARKERS = (
     "相较",
     "带动",
     "成本",
+    "矛盾",
     "关注",
     "提振",
+)
+_CONCLUSION_MARKERS = (
+    "综合来看",
+    "总体来看",
+    "预计",
+    "预期",
+    "短期",
+    "后期",
+    "操作方面",
+    "建议",
+    "维持",
+)
+_BOILERPLATE_MARKERS = (
+    "重要声明",
+    "免责声明",
+    "本报告由",
+    "不构成对客户的投资建议",
+    "东海期货力求报告内容",
+    "报告中的观点、结论和建议",
+    "信息和建议不会发生任何变更",
+    "在任何情况下，本公司不对",
+    "交易者需自行承担风险",
+    "本报告版权",
+    "未经书面许可",
+    "版权所有",
+    "联系人",
+    "网址",
+    "数据来自",
 )
 
 
@@ -240,33 +434,12 @@ def _product_sections(
     product_matches: list[LexiconMatch],
     all_matches: list[LexiconMatch],
 ) -> list[tuple[int, int]]:
-    headings = list(_HEADING_PATTERN.finditer(text))
-    if not headings:
-        body_keys = {match.product_key for match in all_matches if match.start < len(text)}
-        return [(0, len(text))] if body_keys == {product_key} else []
-
-    rows: list[tuple[int, int, set[str]]] = []
-    for index, heading in enumerate(headings):
-        end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
-        heading_keys = {
-            match.product_key
-            for match in all_matches
-            if heading.start() <= match.start < heading.end()
-        }
-        rows.append((heading.end(), end, heading_keys))
-
-    direct = [(start, end) for start, end, keys in rows if product_key in keys]
-    if direct:
-        return direct
-
-    # Generic headings such as 【贵金属】 may not map to a concrete key.  They
-    # are acceptable only when the current product is explicitly mentioned in
-    # that otherwise-unmapped section.
-    return [
-        (start, end)
-        for start, end, keys in rows
-        if not keys and any(start <= match.start < end for match in product_matches)
-    ]
+    return product_section_spans(
+        text,
+        product_key=product_key,
+        product_matches=product_matches,
+        all_matches=all_matches,
+    )
 
 
 def _complete_sentence_span(
@@ -316,13 +489,61 @@ def _contains_unexplained_other_product(
     end: int,
     quote: str,
     product_key: str,
+    signal_start: int,
+    signal_end: int,
+    product_matches: list[LexiconMatch],
     other_matches: list[LexiconMatch],
 ) -> bool:
     has_other = any(
         match.product_key != product_key and start <= match.start < end
         for match in other_matches
     )
-    return has_other and not any(marker in quote for marker in _COMPARISON_MARKERS)
+    if not has_other:
+        return False
+    clause_start, clause_end = _clause_span(text, signal_start, signal_end, start, end)
+    target_in_clause = any(clause_start <= match.start < clause_end for match in product_matches)
+    other_in_clause = any(clause_start <= match.start < clause_end for match in other_matches)
+    if target_in_clause and not other_in_clause:
+        return False
+    return not any(marker in quote for marker in _COMPARISON_MARKERS)
+
+
+def _sentence_spans(text: str, start: int, end: int) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    cursor = start
+    for found in re.finditer(r"[。！？!?]", text[start:end]):
+        sentence_end = start + found.end()
+        sentence_start = cursor
+        while sentence_start < sentence_end and text[sentence_start].isspace():
+            sentence_start += 1
+        if sentence_start < sentence_end:
+            spans.append((sentence_start, sentence_end))
+        cursor = sentence_end
+    return spans
+
+
+def _is_candidate_quote(quote: str) -> bool:
+    if len(quote) < 6 or len(quote) > 600 or quote[-1] not in _SENTENCE_ENDINGS:
+        return False
+    if quote[0] in "，。；：！？!?%、,." or _HEADING_PATTERN.search(quote):
+        return False
+    return not any(marker in quote for marker in _BOILERPLATE_MARKERS)
+
+
+def _clause_span(
+    text: str,
+    signal_start: int,
+    signal_end: int,
+    sentence_start: int,
+    sentence_end: int,
+) -> tuple[int, int]:
+    delimiters = "，,；;。！？!?\n"
+    previous = max(text.rfind(mark, sentence_start, signal_start) for mark in delimiters)
+    start = sentence_start if previous < 0 else previous + 1
+    endings = [text.find(mark, signal_end, sentence_end) for mark in delimiters]
+    endings = [position for position in endings if position >= 0]
+    end = min(endings) + 1 if endings else sentence_end
+    return start, end
 
 
 def _overlaps_existing_excerpt(candidate: dict[str, Any], excerpts: list[dict[str, Any]]) -> bool:

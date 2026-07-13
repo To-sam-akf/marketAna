@@ -31,7 +31,7 @@ PATTERNS: tuple[tuple[str, str, str, str], ...] = (
     ("momentum", "看跌", "bearish", r"连续\d*日下跌|跌势延续|下跌动能"),
     ("sentiment", "看涨", "bullish", r"市场情绪(?:偏多|乐观)|持仓(?:增加|上升)|成交活跃"),
     ("sentiment", "看跌", "bearish", r"市场情绪(?:偏空|悲观)|持仓(?:减少|下降)|成交低迷"),
-    ("neutral", "中性", "neutral", r"震荡|区间运行|盘整|横盘|整理|观望|方向不明|窄幅波动|持稳"),
+    ("neutral", "中性", "neutral", r"震荡|区间运行|盘整|横盘|整理|观望|方向不明|窄幅波动|持稳|持平"),
 )
 
 

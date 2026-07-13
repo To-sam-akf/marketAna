@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func
 
 
 UNKNOWN_PRODUCT = "未知"
@@ -24,14 +24,8 @@ def displayable_product_clause(product_column: Any):
 
 
 def formal_analysis_clause(result_model: Any):
-    """Exclude evidence-less review suggestions from formal aggregations."""
+    """Expose only finalized, displayable analysis results."""
     return and_(
         displayable_product_clause(result_model.product),
-        or_(
-            result_model.need_manual_review.is_(False),
-            and_(
-                result_model.reason.is_not(None),
-                func.trim(result_model.reason) != "",
-            ),
-        ),
+        result_model.need_manual_review.is_(False),
     )

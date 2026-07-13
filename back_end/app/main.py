@@ -11,6 +11,7 @@ from back_end.app.api.manual_review import router as manual_review_router
 from back_end.app.api.products import router as products_router
 from back_end.app.api.product_review import router as product_review_router
 from back_end.app.api.results import router as results_router
+from back_end.app.api.review_queue import router as review_queue_router
 from back_end.app.api.tasks import router as tasks_router
 from back_end.app.api.trends import router as trends_router
 from back_end.app.core.config import get_settings
@@ -66,6 +67,7 @@ def create_app() -> FastAPI:
     app.include_router(dashboard_router)
     app.include_router(articles_router)
     app.include_router(manual_review_router)
+    app.include_router(review_queue_router)
     app.include_router(products_router)
     app.include_router(product_review_router)
     app.include_router(companies_router)

@@ -1,705 +1,120 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import type { ArticleDetail, Direction, AnalysisResultItem, ReviewQueueItem } from '../api/types'
-import { confirmResult, createManualConclusion, getArticleDetail, rejectReviewItem, runArticleTask } from '../api/client'
-import { DIRECTION_CONFIG } from '../api/types'
+import type { ArticleDetail, Direction, ProductCatalogItem, ReviewDiagnostic, ReviewQueueItem } from '../api/types'
+import { articleSourceUrl, createManualConclusion, getArticleDetail, getProductCatalog, rejectReviewItem, runArticleTask } from '../api/client'
 import LoadingState from '../components/common/LoadingState.vue'
 import ErrorState from '../components/common/ErrorState.vue'
 
-const route = useRoute()
-const router = useRouter()
-const detail = ref<ArticleDetail | null>(null)
-const loading = ref(true)
-const error = ref('')
-const confirming = ref(false)
-const confirmDirection = ref<Direction>('中性')
-const confirmReason = ref('')
-const reviewBusy = ref<Record<number, string>>({})
-const reviewError = ref<Record<number, string>>({})
-const openConclusion = ref<Record<number, boolean>>({})
-const reviewDirection = ref<Record<number, Direction>>({})
-const reviewReason = ref<Record<number, string>>({})
-const reviewEvidence = ref<Record<number, string>>({})
-
-const articleId = computed(() => Number(route.params.id))
-const activeProduct = computed(() => (route.query.product as string) || '')
-
-// 所有分析结果
-const allResults = computed(() =>
-  detail.value?.analysis_results ?? (
-    detail.value?.analysis_result ? [detail.value.analysis_result as unknown as AnalysisResultItem] : []
-  )
-)
-
-// 当前聚焦品种的分析结果
-const activeResult = computed(() => {
-  if (!activeProduct.value) return allResults.value[0] ?? null
-  return allResults.value.find((r) => r.product === activeProduct.value) ?? allResults.value[0] ?? null
-})
-
-function hasVerifiedEvidence(result: AnalysisResultItem) {
-  const evidence = result.evidence
-  return !!(
-    evidence?.refined_text ||
-    evidence?.cleaned_text ||
-    evidence?.excerpts?.some((item) => item.quote?.trim())
-  )
-}
-
-function isPendingConclusion(result: AnalysisResultItem) {
-  return result.need_manual_review && !hasVerifiedEvidence(result)
-}
-
-const activeIsPendingConclusion = computed(() =>
-  activeResult.value ? isPendingConclusion(activeResult.value) : false,
-)
-
-// 结论依据：优先使用后端按品种切分后的正文
-const evidenceText = computed(() => {
-  return activeResult.value?.evidence?.refined_text ||
-    activeResult.value?.evidence?.cleaned_text ||
-    activeResult.value?.evidence?.excerpts?.map((item) => item.quote).filter(Boolean).join('\n\n') ||
-    ''
-})
-
-// 其他品种（本研报还覆盖）
-const otherResults = computed(() =>
-  allResults.value.filter((r) => r.product !== activeResult.value?.product)
-)
-
-function dirCfg(direction: string) {
-  return DIRECTION_CONFIG[direction as Direction]
-}
-
-function methodLabel(method: string): string {
-  if (method === 'rule') return '规则引擎'
-  if (method === 'llm') return '大模型'
-  if (method === 'manual') return '人工'
-  return method
-}
-
-function switchProduct(product: string) {
-  router.push({ query: { product } })
-}
-
-function goBack() {
-  if (window.history.length > 1) {
-    router.back()
-  } else {
-    router.push('/products')
-  }
-}
+const route = useRoute(); const router = useRouter(); const articleId = computed(() => Number(route.params.id))
+const detail = ref<ArticleDetail | null>(null); const catalog = ref<ProductCatalogItem[]>([])
+const loading = ref(true); const error = ref(''); const articleBusy = ref(false); const showLogs = ref(route.query.logs === '1')
+const reviewer = ref(localStorage.getItem('marketana_reviewer') || '')
+const busy = ref<Record<number,string>>({}); const itemError = ref<Record<number,string>>({})
+const openConclusion = ref<Record<number,boolean>>({}); const direction = ref<Record<number,Direction>>({})
+const reason = ref<Record<number,string>>({}); const evidence = ref<Record<number,string>>({}); const productKey = ref<Record<number,string>>({})
+const rejecting = ref<ReviewQueueItem | null>(null); const rejectionCode = ref('navigation_noise'); const rejectionNote = ref('')
+const rejectionReasons = [
+  ['navigation_noise','网页导航误识别'], ['not_futures_product','非期货品种'],
+  ['no_analysis_content','无有效分析内容'], ['duplicate','重复审核项'], ['other','其他'],
+]
+const concreteCatalog = computed(() => catalog.value.filter(item => item.active && !item.product_key.startsWith('GROUP.')))
 
 async function fetchData() {
-  loading.value = true
-  error.value = ''
-  try {
-    const res = await getArticleDetail(articleId.value)
-    if (res.code === 0) {
-      detail.value = res.data
-    } else {
-      error.value = res.message || '加载失败'
-    }
-  } catch (e) {
-    error.value = '网络错误'
-  } finally {
-    loading.value = false
-  }
+  loading.value=true; error.value=''
+  try { const [article, products] = await Promise.all([getArticleDetail(articleId.value), getProductCatalog()]); detail.value=article.data; catalog.value=products.data }
+  catch(cause){ error.value=cause instanceof Error?cause.message:'详情加载失败' } finally { loading.value=false }
 }
-
-async function submitConfirmation() {
-  const result = activeResult.value
-  if (!result?.id) return
-  confirming.value = true
-  try {
-    await confirmResult(result.id, {
-      product: result.product,
-      product_key: result.product_key,
-      direction: confirmDirection.value,
-      reason: confirmReason.value || result.reason || undefined,
-      confidence: Math.max(0, Math.min(1, result.confidence)),
-      confirmed_by: 'frontend',
-    })
-    await fetchData()
-  } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : '确认失败'
-  } finally {
-    confirming.value = false
-  }
+function saveReviewer(){ reviewer.value=reviewer.value.trim(); if(reviewer.value) localStorage.setItem('marketana_reviewer',reviewer.value); else localStorage.removeItem('marketana_reviewer') }
+function goBack(){ router.push('/review-queue') }
+function openSource(){ window.open(articleSourceUrl(articleId.value),'_blank','noopener') }
+async function rerun(){ articleBusy.value=true; try{await runArticleTask(articleId.value);await fetchData()}catch(cause){error.value=cause instanceof Error?cause.message:'重新解析失败'}finally{articleBusy.value=false} }
+function quotes(item:ReviewQueueItem):string[]{
+  const value=item.evidence;if(!value)return[];if(typeof value==='string')return[value]
+  const rows=Array.isArray(value)?value:(typeof value==='object'&&value&&Array.isArray((value as Record<string,unknown>).excerpts)?(value as Record<string,unknown>).excerpts as unknown[]:[])
+  return rows.flatMap(row=>typeof row==='string'?[row]:row&&typeof row==='object'&&'quote' in row?[String((row as Record<string,unknown>).quote||'')]:[]).filter(Boolean)
 }
-
-function reviewStatusLabel(status: string) {
-  if (status === 'rejected') return '已驳回'
-  if (status === 'resolved') return '已创建人工结论'
-  return '待审核'
+function diagnostic(item:ReviewQueueItem):ReviewDiagnostic|null{
+  if(!item.evidence||typeof item.evidence!=='object'||Array.isArray(item.evidence))return null
+  const value=(item.evidence as Record<string,unknown>).diagnostic
+  return value&&typeof value==='object'?value as ReviewDiagnostic:null
 }
-
-function triggerEvidence(item: ReviewQueueItem): string[] {
-  const value = item.evidence
-  if (!value) return []
-  if (typeof value === 'string') return [value]
-  if (Array.isArray(value)) {
-    return value.flatMap((entry) => {
-      if (typeof entry === 'string') return [entry]
-      if (entry && typeof entry === 'object' && 'quote' in entry) return [String(entry.quote || '')]
-      return []
-    }).filter(Boolean)
-  }
-  if (typeof value === 'object') {
-    const record = value as Record<string, unknown>
-    const excerpts = Array.isArray(record.excerpts) ? record.excerpts : []
-    const quotes = excerpts.flatMap((entry) => {
-      if (typeof entry === 'string') return [entry]
-      if (entry && typeof entry === 'object' && 'quote' in entry) {
-        return [String((entry as Record<string, unknown>).quote || '')]
-      }
-      return []
-    }).filter(Boolean)
-    if (quotes.length) return quotes
-    for (const key of ['quote', 'excerpt', 'text', 'raw']) {
-      if (typeof record[key] === 'string' && record[key]) return [record[key] as string]
-    }
-  }
-  return []
+function evidenceKind(item:ReviewQueueItem):'verified'|'candidate_context'|null{
+  if(!item.evidence||typeof item.evidence!=='object'||Array.isArray(item.evidence))return null
+  const value=(item.evidence as Record<string,unknown>).kind
+  return value==='verified'||value==='candidate_context'?value:null
 }
-
-async function rejectItem(item: ReviewQueueItem) {
-  reviewBusy.value[item.id] = '正在驳回…'
-  reviewError.value[item.id] = ''
-  try {
-    await rejectReviewItem(item.id, '误识别/驳回')
-    await fetchData()
-  } catch (cause) {
-    reviewError.value[item.id] = cause instanceof Error ? cause.message : '驳回失败'
-  } finally {
-    delete reviewBusy.value[item.id]
-  }
+function evidenceNotes(item:ReviewQueueItem):string{
+  if(!item.evidence||typeof item.evidence!=='object'||Array.isArray(item.evidence))return''
+  return String((item.evidence as Record<string,unknown>).notes||'')
 }
-
-async function reparseItem(item: ReviewQueueItem) {
-  reviewBusy.value[item.id] = '正在重新解析…'
-  reviewError.value[item.id] = ''
-  try {
-    await runArticleTask(articleId.value)
-    await fetchData()
-  } catch (cause) {
-    reviewError.value[item.id] = cause instanceof Error ? cause.message : '重新解析失败'
-  } finally {
-    delete reviewBusy.value[item.id]
-  }
+function retrySummary(value:ReviewDiagnostic):string{
+  const parts:string[]=[]
+  if(value.transport_retry_count)parts.push(`传输重试 ${value.transport_retry_count} 次`)
+  if(value.correction_retry_count)parts.push(`格式纠错 ${value.correction_retry_count} 次`)
+  return parts.length?`已自动${parts.join('，')}，仍未通过。`:'该错误不满足自动重试条件。'
 }
-
-function showConclusionForm(item: ReviewQueueItem) {
-  openConclusion.value[item.id] = true
-  reviewDirection.value[item.id] ||= '中性'
+function beginConclusion(item:ReviewQueueItem){openConclusion.value[item.id]=true;direction.value[item.id]||='中性';productKey.value[item.id]||=item.product_key||''}
+function complete(item:ReviewQueueItem){return !!reviewer.value.trim()&&!!productKey.value[item.id]&&!!direction.value[item.id]&&!!reason.value[item.id]?.trim()&&!!evidence.value[item.id]?.trim()}
+async function submitConclusion(item:ReviewQueueItem){
+  if(!complete(item))return;busy.value[item.id]='正在创建…';itemError.value[item.id]='';saveReviewer()
+  try{await createManualConclusion(item.id,{product_key:productKey.value[item.id]||'',direction:direction.value[item.id]||'中性',reason:(reason.value[item.id]||'').trim(),evidence:(evidence.value[item.id]||'').trim(),reviewed_by:reviewer.value});await fetchData()}
+  catch(cause){itemError.value[item.id]=cause instanceof Error?cause.message:'创建失败'}finally{delete busy.value[item.id]}
 }
-
-function isConclusionComplete(item: ReviewQueueItem) {
-  return !!reviewDirection.value[item.id] && !!reviewReason.value[item.id]?.trim() && !!reviewEvidence.value[item.id]?.trim()
+function beginReject(item:ReviewQueueItem){rejecting.value=item;rejectionCode.value='navigation_noise';rejectionNote.value=''}
+async function confirmReject(){
+  const item=rejecting.value;if(!item||!reviewer.value.trim())return;busy.value[item.id]='正在驳回…';saveReviewer()
+  try{await rejectReviewItem(item.id,{reviewed_by:reviewer.value,reason_code:rejectionCode.value,note:rejectionNote.value.trim()||undefined});rejecting.value=null;await fetchData()}
+  catch(cause){itemError.value[item.id]=cause instanceof Error?cause.message:'驳回失败'}finally{delete busy.value[item.id]}
 }
-
-async function submitManualConclusion(item: ReviewQueueItem) {
-  if (!isConclusionComplete(item)) return
-  reviewBusy.value[item.id] = '正在创建…'
-  reviewError.value[item.id] = ''
-  try {
-    await createManualConclusion(item.id, {
-      direction: reviewDirection.value[item.id] || '中性',
-      reason: (reviewReason.value[item.id] || '').trim(),
-      evidence: (reviewEvidence.value[item.id] || '').trim(),
-      product: item.product || undefined,
-      product_key: item.product_key || undefined,
-    })
-    await fetchData()
-  } catch (cause) {
-    reviewError.value[item.id] = cause instanceof Error ? cause.message : '创建人工结论失败'
-  } finally {
-    delete reviewBusy.value[item.id]
-  }
-}
-
+function statusLabel(status:string){return status==='rejected'?'已驳回':status==='resolved'?'已创建人工结论':'待审核'}
 onMounted(fetchData)
 </script>
 
 <template>
   <div class="detail-page">
-    <button class="back-btn" @click="goBack">← 返回</button>
-
-    <LoadingState v-if="loading" />
-    <ErrorState v-else-if="error" :message="error" :on-retry="fetchData" />
-
-    <template v-else-if="detail && activeResult">
-      <!-- 研报标题 -->
-      <div class="article-header">
-        <h1 class="article-title">{{ detail.article.title }}</h1>
-        <div class="article-meta">
-          <span>{{ detail.article.source || '未知来源' }}</span>
-          <span class="meta-divider">/</span>
-          <span>{{ detail.article.company || '未知公司' }}</span>
-          <span class="meta-divider">/</span>
-          <span>{{ detail.article.publish_time?.slice(0, 10) || '未知日期' }}</span>
-        </div>
-      </div>
-
-      <!-- 当前品种观点摘要（核心卡片） -->
-      <div class="focus-card">
-        <div class="focus-top">
-          <span class="focus-product">{{ activeResult.product }}</span>
-          <span v-if="activeIsPendingConclusion" class="focus-direction pending-direction">
-            待判断
-          </span>
-          <span
-            v-else-if="dirCfg(activeResult.direction)"
-            class="focus-direction"
-            :style="{ background: dirCfg(activeResult.direction).bgColor, color: dirCfg(activeResult.direction).color }"
-          >
-            {{ activeResult.direction }}
-          </span>
-          <span
-            v-if="!activeIsPendingConclusion"
-            class="focus-confidence"
-            :class="activeResult.confidence >= 0.5 ? 'conf-high' : 'conf-low'"
-          >
-            {{ (activeResult.confidence * 100).toFixed(0) }}%
-          </span>
-          <span class="focus-method">{{ methodLabel(activeResult.analysis_method) }}</span>
-          <span v-if="activeResult.need_manual_review" class="focus-review">待人工确认</span>
-        </div>
-
-        <div v-if="activeIsPendingConclusion" class="rule-suggestion">
-          规则建议：
-          <span v-if="dirCfg(activeResult.direction)" :style="{ color: dirCfg(activeResult.direction).color }">
-            {{ activeResult.direction }}
-          </span>
-          · {{ (activeResult.confidence * 100).toFixed(0) }}%
-          <span class="suggestion-note">（尚无本品种可验证证据）</span>
-        </div>
-
-        <p class="focus-reason">
-          {{ activeIsPendingConclusion
-            ? '当前无法形成正式结论，请结合原文完成人工确认。'
-            : (activeResult.reason || activeResult.evidence?.summary || '暂无理由') }}
-        </p>
-
-        <div v-if="activeResult.need_manual_review" class="confirmation-box">
-          <strong>人工确认</strong>
-          <select v-model="confirmDirection" aria-label="确认方向">
-            <option value="看涨">看涨</option>
-            <option value="看跌">看跌</option>
-            <option value="中性">中性</option>
-          </select>
-          <input v-model="confirmReason" placeholder="可选：补充确认理由">
-          <button type="button" :disabled="confirming" @click="submitConfirmation">
-            {{ confirming ? '提交中…' : '确认结果' }}
-          </button>
-        </div>
-
-        <!-- 结论依据 -->
-        <div v-if="evidenceText" class="evidence-section">
-          <h3 class="evidence-heading">
-            结论依据
-            <span v-if="activeResult.evidence?.section_type === 'mixed'" class="evidence-badge">混合片段</span>
-          </h3>
-          <div class="refined-text">{{ evidenceText }}</div>
-        </div>
-      </div>
-
-      <!-- 本研报还覆盖 -->
-      <div v-if="otherResults.length" class="other-section">
-        <h3 class="other-heading">本研报还覆盖</h3>
-        <div class="other-list">
-          <button
-            v-for="result in otherResults"
-            :key="result.product + (result.contract ?? '')"
-            class="other-chip"
-            @click="switchProduct(result.product)"
-          >
-            <span class="other-product">{{ result.product }}</span>
-            <span v-if="isPendingConclusion(result)" class="other-direction pending-text">
-              待判断
-            </span>
-            <span
-              v-else-if="dirCfg(result.direction)"
-              class="other-direction"
-              :style="{ color: dirCfg(result.direction).color }"
-            >
-              {{ result.direction }}
-            </span>
-            <span v-if="!isPendingConclusion(result)" class="other-confidence" :class="result.confidence >= 0.5 ? 'conf-high' : 'conf-low'">
-              {{ (result.confidence * 100).toFixed(0) }}%
-            </span>
-            <span v-else class="other-suggestion">
-              建议{{ result.direction }} {{ (result.confidence * 100).toFixed(0) }}%
-            </span>
-          </button>
-        </div>
-      </div>
-
-    </template>
-
-    <!-- 无分析结果 -->
-    <div v-else-if="detail && !allResults.length" class="review-empty-page">
-      <div class="empty-card">
-        <h1>{{ detail.article.title }}</h1>
-        <p v-if="detail.review_queue?.length">
-          当前没有正式分析结果，已有 {{ detail.review_queue.length }} 项进入人工复核队列。
-        </p>
-        <p v-else>暂无分析结果，可能仍在处理或原文未识别到有效品种。</p>
-      </div>
-
-      <section v-if="detail.review_queue?.length" class="manual-review-section">
-        <div class="review-section-heading">
-          <div>
-            <h2>人工审核</h2>
-            <p>逐项核对触发证据。只有方向、理由和证据均填写完整，才会生成正式结果。</p>
+    <button class="back" @click="goBack">← 返回审核队列</button>
+    <LoadingState v-if="loading"/><ErrorState v-else-if="error" :message="error" :on-retry="fetchData"/>
+    <template v-else-if="detail">
+      <header class="article-header"><div><h1>{{ detail.article.title }}</h1><p>{{ detail.article.company||detail.article.source||'未知机构' }} · {{ detail.article.publish_time?.slice(0,10)||'发布日期未知' }}</p></div>
+        <div class="article-actions"><button @click="openSource">查看原文</button><button :disabled="articleBusy" @click="rerun">{{articleBusy?'解析中…':'重新解析整篇'}}</button><button @click="showLogs=!showLogs">{{showLogs?'收起日志':'查看处理日志'}}</button></div>
+      </header>
+      <section v-if="showLogs" class="logs"><h2>处理日志</h2><div v-for="log in detail.task_logs" :key="log.id"><strong>{{log.stage}} · {{log.status}}</strong><span>{{log.created_at.slice(0,16).replace('T',' ')}}</span><p>{{log.message||'无详细信息'}}</p></div><p v-if="!detail.task_logs.length">暂无处理日志</p></section>
+      <section v-if="detail.analysis_results.length" class="formal-results"><h2>正式分析结果</h2><article v-for="result in detail.analysis_results" :key="result.id"><strong>{{result.product}} · {{result.direction}}</strong><span>{{result.analysis_method==='manual'?'人工结论':result.analysis_method}}</span><p>{{result.reason||'暂无理由'}}</p></article></section>
+      <section v-if="detail.review_queue?.length" class="review-section">
+        <div class="section-heading"><div><h2>人工审核</h2><p>方向、标准品种、理由和证据完整后才会创建正式结果。</p></div><label>审核人<input v-model="reviewer" placeholder="请输入姓名" @change="saveReviewer"></label></div>
+        <article v-for="(item,index) in detail.review_queue" :key="item.id" class="review-card">
+          <div class="item-heading"><strong>#{{index+1}} {{item.product||item.product_key||'未识别品种'}}</strong><span :class="`status-${item.status}`">{{statusLabel(item.status)}}</span></div>
+          <p>触发原因：{{item.reason_label||item.reason}}</p>
+          <div v-if="diagnostic(item)" class="diagnostic-summary">
+            <p><strong>具体原因：</strong>{{diagnostic(item)?.message}} <code>{{diagnostic(item)?.error_type}}</code></p>
+            <p>{{retrySummary(diagnostic(item)!)}}</p>
+            <details><summary>诊断详情</summary>
+              <dl><dt>服务商</dt><dd>{{diagnostic(item)?.provider||'未知'}}</dd><dt>请求尝试</dt><dd>{{diagnostic(item)?.attempt_count}} 次</dd>
+                <template v-if="diagnostic(item)?.http_status!==undefined"><dt>HTTP 状态</dt><dd>{{diagnostic(item)?.http_status}}</dd></template>
+                <template v-if="diagnostic(item)?.content_type"><dt>Content-Type</dt><dd>{{diagnostic(item)?.content_type}}</dd></template>
+                <template v-if="diagnostic(item)?.sse_line_count!==undefined"><dt>SSE 行数</dt><dd>{{diagnostic(item)?.sse_line_count}}</dd><dt>收到 [DONE]</dt><dd>{{diagnostic(item)?.done_received?'是':'否'}}</dd></template>
+              </dl>
+              <ul v-if="diagnostic(item)?.parse_errors?.length"><li v-for="(failure,i) in diagnostic(item)?.parse_errors" :key="i">{{failure.phase==='correction'?'纠错返回':'初次返回'}} · {{failure.message}}</li></ul>
+              <div v-if="diagnostic(item)?.raw_response_excerpt"><strong>响应片段</strong><pre>{{diagnostic(item)?.raw_response_excerpt}}</pre></div>
+              <div v-if="diagnostic(item)?.sse_event_samples?.length"><strong>SSE 事件样本</strong><pre v-for="(sample,i) in diagnostic(item)?.sse_event_samples" :key="i">{{sample}}</pre></div>
+            </details>
           </div>
-          <span>{{ detail.review_queue.length }} 项</span>
-        </div>
-
-        <article v-for="(item, index) in detail.review_queue" :key="item.id" class="manual-review-card">
-          <div class="review-item-heading">
-            <div>
-              <span class="review-index">#{{ index + 1 }}</span>
-              <strong>{{ item.product || item.product_key || '未识别品种' }}</strong>
-            </div>
-            <span class="review-status" :class="`status-${item.status}`">{{ reviewStatusLabel(item.status) }}</span>
-          </div>
-          <p class="trigger-reason">触发原因：{{ item.reason }}</p>
-          <div class="trigger-evidence">
-            <strong>触发证据</strong>
-            <blockquote v-for="(quote, quoteIndex) in triggerEvidence(item)" :key="quoteIndex">{{ quote }}</blockquote>
-            <p v-if="!triggerEvidence(item).length">该项未返回可展示的原文片段，请重新解析或结合原文审核。</p>
-          </div>
-
-          <div v-if="item.status === 'pending'" class="review-actions">
-            <button class="danger-button" type="button" :disabled="!!reviewBusy[item.id]" @click="rejectItem(item)">误识别/驳回</button>
-            <button type="button" :disabled="!!reviewBusy[item.id]" @click="reparseItem(item)">重新解析</button>
-            <button class="primary-action" type="button" :disabled="!!reviewBusy[item.id]" @click="showConclusionForm(item)">创建人工结论</button>
-            <span v-if="reviewBusy[item.id]" class="operation-status">{{ reviewBusy[item.id] }}</span>
-          </div>
-
-          <form v-if="item.status === 'pending' && openConclusion[item.id]" class="manual-form" @submit.prevent="submitManualConclusion(item)">
-            <label>方向
-              <select v-model="reviewDirection[item.id]" required>
-                <option value="看涨">看涨</option>
-                <option value="看跌">看跌</option>
-                <option value="中性">中性</option>
-              </select>
-            </label>
-            <label>理由
-              <textarea v-model="reviewReason[item.id]" required rows="3" placeholder="填写形成该方向判断的完整理由" />
-            </label>
-            <label>证据
-              <textarea v-model="reviewEvidence[item.id]" required rows="4" placeholder="粘贴并说明支持结论的原文证据" />
-            </label>
-            <div class="form-actions">
-              <button type="button" @click="openConclusion[item.id] = false">取消</button>
-              <button class="primary-action" type="submit" :disabled="!isConclusionComplete(item) || !!reviewBusy[item.id]">创建正式结果</button>
-            </div>
-          </form>
-          <p v-if="reviewError[item.id]" class="review-error">{{ reviewError[item.id] }}</p>
-          <p v-if="item.status !== 'pending' && item.reviewed_at" class="review-audit">
-            {{ item.reviewed_at.slice(0, 16).replace('T', ' ') }} · {{ item.reviewed_by || '审核人员' }}
-          </p>
+          <div class="evidence-box"><strong>{{evidenceKind(item)==='candidate_context'?'待核对原文上下文':'触发证据'}}</strong><small v-if="evidenceNotes(item)">{{evidenceNotes(item)}}</small><blockquote v-for="(quote,i) in quotes(item)" :key="i">{{quote}}</blockquote><em v-if="!quotes(item).length">暂无有效触发证据</em></div>
+          <div v-if="item.status==='pending'" class="item-actions"><button class="danger" :disabled="!!busy[item.id]" @click="beginReject(item)">误识别/驳回</button><button class="primary" :disabled="!!busy[item.id]" @click="beginConclusion(item)">创建人工结论</button><span>{{busy[item.id]}}</span></div>
+          <form v-if="item.status==='pending'&&openConclusion[item.id]" class="conclusion-form" @submit.prevent="submitConclusion(item)">
+            <label>标准品种<select v-model="productKey[item.id]" required><option value="">请选择</option><option v-for="product in concreteCatalog" :key="product.product_key" :value="product.product_key">{{product.display_name}} · {{product.exchange}} {{product.symbol}}</option></select></label>
+            <label>方向<select v-model="direction[item.id]" required><option>看涨</option><option>看跌</option><option>中性</option></select></label>
+            <label>理由<textarea v-model="reason[item.id]" required rows="3"/></label><label>证据<textarea v-model="evidence[item.id]" required rows="4"/></label>
+            <div class="form-actions"><button type="button" @click="openConclusion[item.id]=false">取消</button><button class="primary" :disabled="!complete(item)||!!busy[item.id]">创建正式结果</button></div>
+          </form><p v-if="itemError[item.id]" class="error">{{itemError[item.id]}}</p>
         </article>
-      </section>
-    </div>
+      </section><section v-else class="empty">该文章当前没有审核项。</section>
+    </template>
+    <div v-if="rejecting" class="modal-backdrop" @click.self="rejecting=null"><form class="modal" @submit.prevent="confirmReject"><h2>确定驳回该识别项吗？</h2><p>驳回后流水线重跑不会重新进入待审核。</p><label>驳回原因<select v-model="rejectionCode" required><option v-for="row in rejectionReasons" :key="row[0]" :value="row[0]">{{row[1]}}</option></select></label><label>补充说明<textarea v-model="rejectionNote" rows="3"/></label><p v-if="!reviewer.trim()" class="error">请先填写审核人姓名。</p><div class="form-actions"><button type="button" @click="rejecting=null">取消</button><button class="danger" :disabled="!reviewer.trim()">确认驳回</button></div></form></div>
   </div>
 </template>
 
 <style scoped>
-.detail-page {
-  max-width: 800px;
-}
-
-/* 返回按钮 */
-.back-btn {
-  background: none;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  padding: 6px 14px;
-  font-size: 13px;
-  color: #666;
-  cursor: pointer;
-  margin-bottom: 16px;
-  transition: all 0.15s;
-}
-
-.back-btn:hover {
-  border-color: #e74c3c;
-  color: #e74c3c;
-}
-
-/* 研报标题 */
-.article-header {
-  margin-bottom: 20px;
-}
-
-.article-title {
-  font-size: 20px;
-  font-weight: 700;
-  color: #1a1a2e;
-  margin: 0 0 8px;
-  line-height: 1.4;
-}
-
-.article-meta {
-  font-size: 13px;
-  color: #888;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.meta-divider {
-  color: #ddd;
-}
-
-/* 聚焦品种卡片 */
-.focus-card {
-  background: #fff;
-  border-radius: 12px;
-  padding: 20px 24px;
-  border: 1px solid #f0f0f0;
-  border-left: 4px solid #e74c3c;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-  margin-bottom: 16px;
-}
-
-.focus-top {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
-.focus-product {
-  font-size: 22px;
-  font-weight: 700;
-  color: #1a1a2e;
-}
-
-.focus-direction {
-  display: inline-block;
-  padding: 3px 12px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.pending-direction {
-  background: #fff3d6;
-  color: #9a6700;
-}
-
-.rule-suggestion {
-  background: #fff8ed;
-  border-radius: 6px;
-  color: #5f6670;
-  font-size: 13px;
-  margin-bottom: 10px;
-  padding: 8px 10px;
-}
-
-.suggestion-note {
-  color: #999;
-}
-
-.focus-confidence {
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.conf-high { color: #27ae60; }
-.conf-low { color: #e74c3c; }
-
-.focus-method {
-  font-size: 12px;
-  color: #999;
-  background: #f5f6fa;
-  padding: 2px 8px;
-  border-radius: 4px;
-}
-
-.focus-review {
-  font-size: 12px;
-  font-weight: 600;
-  color: #e74c3c;
-  background: #fce8e6;
-  padding: 2px 8px;
-  border-radius: 4px;
-}
-
-.focus-reason {
-  font-size: 15px;
-  color: #333;
-  line-height: 1.6;
-  margin: 0 0 4px;
-}
-
-.confirmation-box {
-  align-items: center;
-  background: #fff8ed;
-  border: 1px solid #f1d7a7;
-  border-radius: 8px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 14px;
-  padding: 10px;
-}
-
-.confirmation-box select,
-.confirmation-box input,
-.confirmation-box button {
-  border: 1px solid #d8c7a8;
-  border-radius: 5px;
-  min-height: 30px;
-  padding: 4px 8px;
-}
-
-.confirmation-box input { flex: 1 1 220px; }
-.confirmation-box button { background: #2367d1; color: white; cursor: pointer; }
-
-/* 结论依据 */
-.evidence-section {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid #f0f0f0;
-}
-
-.evidence-heading {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1a1a2e;
-  margin: 0 0 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.evidence-badge {
-  font-size: 12px;
-  color: #999;
-  background: #f5f6fa;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-weight: 500;
-}
-
-.refined-text {
-  font-size: 14px;
-  color: #333;
-  line-height: 1.9;
-  white-space: pre-line;
-  word-wrap: break-word;
-}
-
-/* 本研报还覆盖 */
-.other-section {
-  background: #fff;
-  border-radius: 12px;
-  padding: 16px 20px;
-  border: 1px solid #f0f0f0;
-  margin-bottom: 16px;
-}
-
-.other-heading {
-  font-size: 14px;
-  font-weight: 600;
-  color: #555;
-  margin: 0 0 12px;
-}
-
-.other-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.other-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: #f8f9fa;
-  border: 1px solid #e8eaed;
-  border-radius: 8px;
-  padding: 6px 12px;
-  cursor: pointer;
-  transition: all 0.15s;
-  font-size: 13px;
-}
-
-.other-chip:hover {
-  background: #f0f0f0;
-  border-color: #ccc;
-}
-
-.other-product {
-  font-weight: 600;
-  color: #1a1a2e;
-}
-
-.other-direction {
-  font-weight: 600;
-  font-size: 12px;
-}
-
-.other-confidence {
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.pending-text {
-  color: #9a6700;
-}
-
-.other-suggestion {
-  color: #999;
-  font-size: 11px;
-}
-
-/* 完整研报文本 */
-
-/* 空状态 */
-.empty-card {
-  background: #fff;
-  border-radius: 12px;
-  padding: 40px;
-  text-align: center;
-  color: #999;
-  font-size: 14px;
-}
-
-.review-empty-page { max-width: 900px; }
-.manual-review-section { margin-top: 20px; }
-.review-section-heading { align-items: flex-start; display: flex; justify-content: space-between; margin-bottom: 12px; }
-.review-section-heading h2 { color: #1a1a2e; font-size: 20px; }
-.review-section-heading p { color: #77808c; margin-top: 4px; }
-.review-section-heading > span { background: #e9eef7; border-radius: 999px; color: #526173; font-weight: 600; padding: 3px 10px; }
-.manual-review-card { background: #fff; border: 1px solid #e5e8ec; border-radius: 10px; margin-bottom: 12px; padding: 18px; text-align: left; }
-.review-item-heading { align-items: center; display: flex; justify-content: space-between; }
-.review-index { color: #98a0aa; margin-right: 8px; }
-.review-status { border-radius: 999px; font-size: 12px; font-weight: 600; padding: 3px 9px; }
-.status-pending { background: #fff3d6; color: #946200; }
-.status-rejected { background: #f2f3f5; color: #69717b; }
-.status-resolved { background: #e4f6e9; color: #26733b; }
-.trigger-reason { color: #5f6670; margin: 9px 0; }
-.trigger-evidence { background: #f7f8fa; border-radius: 7px; padding: 12px; }
-.trigger-evidence blockquote { border-left: 3px solid #a9b5c5; color: #333; margin-top: 8px; padding-left: 10px; white-space: pre-wrap; }
-.trigger-evidence p { color: #8a919a; margin-top: 6px; }
-.review-actions, .form-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.review-actions button, .form-actions button { background: #fff; border: 1px solid #cfd5dd; border-radius: 5px; cursor: pointer; min-height: 34px; padding: 6px 12px; }
-.review-actions .danger-button { border-color: #e0a5a0; color: #b33b31; }
-.review-actions .primary-action, .form-actions .primary-action { background: #2367d1; border-color: #2367d1; color: #fff; }
-.review-actions button:disabled, .form-actions button:disabled { cursor: not-allowed; opacity: .5; }
-.operation-status { align-self: center; color: #6d7681; }
-.manual-form { background: #f8faff; border: 1px solid #dce5f4; border-radius: 8px; display: grid; gap: 10px; margin-top: 12px; padding: 14px; }
-.manual-form label { color: #3e4752; display: grid; font-weight: 600; gap: 5px; }
-.manual-form select, .manual-form textarea { background: #fff; border: 1px solid #cbd3de; border-radius: 5px; font: inherit; padding: 8px; resize: vertical; }
-.form-actions { justify-content: flex-end; margin-top: 0; }
-.review-error { color: #b33b31; margin-top: 8px; }
-.review-audit { color: #8a919a; font-size: 12px; margin-top: 10px; }
+.detail-page{max-width:960px}.back{background:none;border:1px solid #ccd3dc;border-radius:5px;color:#56616e;cursor:pointer;margin-bottom:16px;padding:6px 12px}.article-header,.section-heading,.item-heading{align-items:flex-start;display:flex;justify-content:space-between;gap:16px}.article-header{background:#fff;border-radius:10px;padding:20px}.article-header h1{color:#17192d;font-size:22px}.article-header p,.section-heading p{color:#87909b;margin-top:5px}.article-actions,.item-actions,.form-actions{display:flex;flex-wrap:wrap;gap:8px}.article-actions button,.item-actions button,.form-actions button{background:#fff;border:1px solid #cbd2dc;border-radius:5px;cursor:pointer;padding:6px 11px}.logs,.formal-results,.review-section,.empty{background:#fff;border:1px solid #e5e8ec;border-radius:10px;margin-top:14px;padding:18px}.logs h2,.formal-results h2,.review-section h2{font-size:18px}.logs>div,.formal-results article{border-top:1px solid #edf0f3;margin-top:10px;padding-top:10px}.logs span,.formal-results span{color:#8a919a;font-size:12px;margin-left:10px}.review-card{border:1px solid #e3e7ec;border-radius:8px;margin-top:12px;padding:15px}.item-heading span{border-radius:999px;font-size:12px;padding:3px 9px}.status-pending{background:#fff3d6;color:#946200}.status-rejected{background:#f0f1f3;color:#68717c}.status-resolved{background:#e4f6e9;color:#26733b}.review-card>p{color:#5a6470;margin:8px 0}.diagnostic-summary{background:#fff5f3;border:1px solid #efcbc6;border-radius:6px;color:#693730;margin:8px 0;padding:10px}.diagnostic-summary p{margin:0 0 5px}.diagnostic-summary code{background:#f7ded9;border-radius:4px;font-size:12px;padding:2px 5px}.diagnostic-summary summary{cursor:pointer;font-weight:600}.diagnostic-summary dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 10px;margin:8px 0}.diagnostic-summary dt{font-weight:600}.diagnostic-summary dd{margin:0;word-break:break-all}.diagnostic-summary ul{padding-left:20px}.diagnostic-summary pre{background:#2c3038;border-radius:5px;color:#eef1f5;margin:5px 0;max-height:180px;overflow:auto;padding:8px;white-space:pre-wrap;word-break:break-all}.evidence-box{background:#f7f8fa;border-radius:6px;padding:10px}.evidence-box small{color:#7b8490;display:block;margin-top:4px}.evidence-box blockquote{border-left:3px solid #9eacc0;margin-top:7px;padding-left:9px}.evidence-box em{color:#946200;display:block;margin-top:5px}.item-actions{margin-top:10px}.primary{background:#2367d1!important;border-color:#2367d1!important;color:#fff}.danger{border-color:#dcaaa5!important;color:#aa382e}.conclusion-form,.modal{display:grid;gap:10px}.conclusion-form{background:#f7f9fd;border-radius:7px;margin-top:12px;padding:13px}.conclusion-form label,.modal label,.section-heading label{display:grid;font-weight:600;gap:4px}.conclusion-form select,.conclusion-form textarea,.modal select,.modal textarea,.section-heading input{border:1px solid #cbd3de;border-radius:5px;font:inherit;padding:7px}.form-actions{justify-content:flex-end}.error{color:#ae352b!important}.modal-backdrop{align-items:center;background:rgba(20,24,35,.45);display:flex;inset:0;justify-content:center;position:fixed;z-index:20}.modal{background:#fff;border-radius:10px;max-width:460px;padding:22px;width:calc(100% - 32px)}.modal p{color:#68717c}@media(max-width:720px){.article-header,.section-heading{display:block}.article-actions{margin-top:12px}}
 </style>

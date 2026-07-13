@@ -16,7 +16,7 @@ from back_end.app.api.product_review import (
     list_product_aliases,
     list_product_resolutions,
 )
-from back_end.app.api.results import confirm_result
+from back_end.app.api.results import confirm_result, get_result_detail
 from back_end.app.api.schemas import (
     ConfirmResultRequest,
     ProductAliasReviewRequest,
@@ -26,6 +26,7 @@ from back_end.app.api.schemas import TaskRunRequest
 from back_end.app.api.tasks import run_task
 from back_end.app.api.trends import get_trends
 from back_end.app.core.database import Base, create_database_tables
+from back_end.app.core.exceptions import AppException
 from back_end.app.core.status import ArticleProcessingStatus
 from back_end.app.models import AnalysisResult, Article, ArticleProductSegment, TaskLog
 from back_end.app.repositories import ArticleRepository
@@ -236,6 +237,7 @@ def test_repository_filters_summary_and_trends(session_factory) -> None:
     assert summary["total_articles"] == 2
     assert summary["manual_review_count"] == 1
     assert summary["direction_distribution"]["看涨"] == 1
+    assert summary["direction_distribution"]["看跌"] == 0
     assert repository.get_trends(product="螺纹钢")[0]["count"] == 1
     session.close()
 
@@ -280,14 +282,10 @@ def test_api_handlers_return_contracts_for_articles_trends_and_confirm(session_f
     assert list_body["data"][0]["publish_time"] == "2026-07-02"
 
     products_body = get_products(session=api_session)
-    assert products_body["data"][0]["product"] == "豆粕"
-    assert products_body["data"][0]["predictions"][0]["company"] == "丙期货"
-    assert products_body["data"][0]["predictions"][0]["date"] == "2026-07-02"
+    assert products_body["data"] == []
 
     companies_body = get_companies(session=api_session)
-    assert companies_body["data"][0]["company"] == "丙期货"
-    assert companies_body["data"][0]["predictions"][0]["product"] == "豆粕"
-    assert companies_body["data"][0]["predictions"][0]["date"] == "2026-07-02"
+    assert companies_body["data"] == []
 
     detail_body = get_article_detail(article.id, session=api_session)
     assert detail_body["data"]["text"]["cleaned_text"] == "cleaned"
@@ -299,8 +297,11 @@ def test_api_handlers_return_contracts_for_articles_trends_and_confirm(session_f
     assert detail_body["data"]["analysis_results"][0]["evidence"]["summary"] == "震荡整理"
 
     trends_body = get_trends(product="豆粕", session=api_session)
-    assert trends_body["data"][0]["product"] == "豆粕"
-    assert trends_body["data"][0]["value"] == 0.0
+    assert trends_body["data"] == []
+
+    with pytest.raises(AppException) as pending_error:
+        get_result_detail(result.id, session=api_session)
+    assert pending_error.value.status_code == 404
 
     confirm_body = confirm_result(
         result.id,
@@ -321,7 +322,152 @@ def test_api_handlers_return_contracts_for_articles_trends_and_confirm(session_f
     assert confirmed_detail["data"]["analysis_result"]["analysis_method"] == "manual"
     assert confirmed_detail["data"]["analysis_result"]["need_manual_review"] is False
     assert confirmed_detail["data"]["analysis_results"][0]["direction"] == "看涨"
+
+    products_body = get_products(session=api_session)
+    assert products_body["data"][0]["product"] == "豆粕"
+    assert products_body["data"][0]["predictions"][0]["result_id"] == result.id
+    assert products_body["data"][0]["predictions"][0]["company"] == "丙期货"
+
+    companies_body = get_companies(session=api_session)
+    assert companies_body["data"][0]["predictions"][0]["result_id"] == result.id
+
+    trends_body = get_trends(product="豆粕", session=api_session)
+    assert trends_body["data"][0]["value"] == 0.9
+
+    result_body = get_result_detail(result.id, session=api_session)
+    assert result_body["data"]["result"]["analysis_method"] == "manual"
+    assert result_body["data"]["article"]["company"] == "丙期货"
+    assert result_body["data"]["article"]["has_source"] is False
     api_session.close()
+
+
+def test_result_detail_returns_finalized_rule_and_llm_results_with_evidence(session_factory) -> None:
+    session = session_factory()
+    repository = ArticleRepository(session)
+
+    rule_article = repository.create_article(
+        title="螺纹钢日报",
+        company="甲期货",
+        file_url="data/rebar.html",
+        file_type="html",
+        publish_time=datetime(2026, 7, 4, 9, 0),
+    )
+    rule_result = repository.save_analysis_result(
+        rule_article.id,
+        product="螺纹钢",
+        direction="看涨",
+        reason="库存持续下降",
+        confidence=0.82,
+        analysis_method="rule",
+    )
+    rule_result.evidence_json = {
+        "summary": "库存下降支撑价格",
+        "source": "segment",
+        "excerpts": [{
+            "quote": "螺纹钢库存连续第三周下降。",
+            "source": "segment",
+            "start_char": 10,
+            "end_char": 25,
+            "match_type": "reason",
+        }],
+        "notes": "规则命中库存信号",
+    }
+
+    llm_article = repository.create_article(
+        title="沪铜展望",
+        source="研究所",
+        company="乙期货",
+    )
+    repository.save_raw_text(llm_article.id, "沪铜供应偏紧，价格可能走强。", parser_type="html")
+    repository.save_cleaned_text(llm_article.id, "沪铜供应偏紧，价格可能走强。")
+    llm_result = repository.save_analysis_result(
+        llm_article.id,
+        product="沪铜",
+        direction="看涨",
+        reason="供应偏紧",
+        confidence=0.76,
+        analysis_method="llm",
+    )
+    session.commit()
+
+    rule_body = get_result_detail(rule_result.id, session=session)["data"]
+    assert rule_body["result"]["analysis_method"] == "rule"
+    assert rule_body["result"]["evidence"]["excerpts"][0]["quote"] == "螺纹钢库存连续第三周下降。"
+    assert rule_body["article"] == {
+        "id": rule_article.id,
+        "title": "螺纹钢日报",
+        "source": None,
+        "company": "甲期货",
+        "publish_time": "2026-07-04T09:00:00",
+        "file_type": "html",
+        "has_source": True,
+    }
+
+    llm_body = get_result_detail(llm_result.id, session=session)["data"]
+    assert llm_body["result"]["analysis_method"] == "llm"
+    assert llm_body["result"]["evidence"]["source"] == "cleaned_text"
+    assert "沪铜供应偏紧" in llm_body["result"]["evidence"]["excerpts"][0]["quote"]
+    session.close()
+
+
+def test_result_detail_hides_pending_invalid_unstored_and_missing_results(session_factory) -> None:
+    session = session_factory()
+    repository = ArticleRepository(session)
+
+    pending_article = repository.create_article(title="待审核")
+    pending = repository.save_analysis_result(
+        pending_article.id,
+        product="豆粕",
+        direction="中性",
+        reason="方向不明确",
+        confidence=0.4,
+        analysis_method="llm",
+        need_manual_review=True,
+    )
+
+    unknown_article = repository.create_article(title="未知品种")
+    unknown = repository.save_analysis_result(
+        unknown_article.id,
+        product="未知",
+        direction="中性",
+        reason="无法识别品种",
+        confidence=0.1,
+        analysis_method="llm",
+    )
+
+    unstored_article = repository.create_article(title="尚未入库")
+    unstored = repository.save_analysis_result(
+        unstored_article.id,
+        product="黄金",
+        direction="看涨",
+        reason="避险需求增加",
+        confidence=0.8,
+        analysis_method="rule",
+        mark_stored=False,
+    )
+
+    blank_article = repository.create_article(title="空品种")
+    blank_article.status = ArticleProcessingStatus.STORED.value
+    blank = AnalysisResult(
+        article_id=blank_article.id,
+        product=" ",
+        product_key="legacy:blank",
+        contract_key="",
+        direction="中性",
+        reason="无品种",
+        confidence=0.2,
+        analysis_method="rule",
+        need_manual_review=False,
+    )
+    session.add(blank)
+    session.commit()
+
+    for result_id in (pending.id, unknown.id, unstored.id, blank.id, 999999):
+        with pytest.raises(AppException) as error:
+            get_result_detail(result_id, session=session)
+        assert error.value.status_code == 404
+        assert error.value.message == "Analysis result not found"
+    session.close()
 
 
 def test_unknown_analysis_results_are_stored_but_hidden_from_frontend_apis(session_factory) -> None:

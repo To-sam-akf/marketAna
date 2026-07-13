@@ -15,12 +15,14 @@ router = APIRouter(prefix="/api/review-items", tags=["manual-review"])
 @router.post("/{review_id}/reject")
 def reject_review_item(
     review_id: int,
-    request: RejectAnalysisReviewRequest | None = None,
+    request: RejectAnalysisReviewRequest,
     session: Session = Depends(get_session),
 ) -> dict:
-    payload = request or RejectAnalysisReviewRequest()
     item = ArticleRepository(session).reject_review_item(
-        review_id, reviewed_by=payload.reviewed_by, note=payload.note
+        review_id,
+        reviewed_by=request.reviewed_by,
+        reason_code=request.reason_code,
+        note=request.note,
     )
     session.commit()
     return success_response({"id": item.id, "status": item.status})
@@ -37,7 +39,6 @@ def create_manual_conclusion(
         direction=request.direction,
         reason=request.reason,
         evidence=request.evidence,
-        product=request.product,
         product_key=request.product_key,
         reviewed_by=request.reviewed_by,
     )

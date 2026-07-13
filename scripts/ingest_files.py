@@ -19,6 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from back_end.app.core.database import get_session
 from back_end.app.models import Article
 from back_end.app.repositories import ArticleRepository
+from back_end.app.core.dates import publish_time_from_path
 
 
 SUPPORTED_DOC_EXTENSIONS = {".pdf": "pdf", ".html": "html", ".htm": "html"}
@@ -130,13 +131,7 @@ def extract_metadata(path: Path, root: Path, base_dir: Path | None = None) -> Fi
 def parse_publish_time(path: Path, root: Path) -> datetime | None:
     # Accept both ``--root data`` and ``--root data/20250401``.  In the
     # latter form the date is the root directory itself, not a child.
-    for part in reversed(path.resolve().parts):
-        if re.fullmatch(r"\d{8}", part):
-            try:
-                return datetime.strptime(part, "%Y%m%d")
-            except ValueError:
-                continue
-    return None
+    return publish_time_from_path(path.resolve())
 
 
 def existing_file_urls(session: Session) -> set[str]:

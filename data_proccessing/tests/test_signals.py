@@ -33,3 +33,46 @@ def test_historical_signal_is_discounted() -> None:
     signals = _signals("螺纹钢昨日上涨，但今日库存增加")
     historical = [signal for signal in signals if "历史" in signal.context_flags or "historical" in signal.context_flags]
     assert historical
+
+
+def test_heading_section_captures_direction_beyond_fixed_window() -> None:
+    lexicon = RuntimeLexicon(
+        [{"product_key": "SHFE.AL", "canonical": "沪铝", "aliases": ["铝"], "negative_contexts": []}]
+    )
+    text = "【铝】" + "铝基本面整体平淡，产量处于高位，需求端没有爆发增长可能。" * 3 + "短期偏空。"
+
+    signals = extract_signals(text, lexicon.find_matches(text), context_window=20)
+
+    assert any(signal.product_key == "SHFE.AL" and signal.phrase == "偏空" for signal in signals)
+
+
+def test_related_product_does_not_borrow_owner_section_signals() -> None:
+    lexicon = RuntimeLexicon(
+        [
+            {"product_key": "DCE.EG", "canonical": "乙二醇", "aliases": ["乙二醇"], "negative_contexts": []},
+            {"product_key": "CZCE.PR", "canonical": "瓶片", "aliases": ["瓶片"], "negative_contexts": []},
+        ]
+    )
+    text = "【乙二醇】乙二醇供应下降，关注瓶片能否增加开工支撑，乙二醇短期震荡。"
+
+    signals = extract_signals(text, lexicon.find_matches(text))
+
+    assert any(signal.product_key == "DCE.EG" for signal in signals)
+    assert all(signal.product_key != "CZCE.PR" for signal in signals)
+
+
+def test_shared_heading_assigns_each_signal_to_its_nearest_product_clause() -> None:
+    lexicon = RuntimeLexicon(
+        [
+            {"product_key": "CZCE.SM", "canonical": "锰硅", "aliases": ["硅锰"], "negative_contexts": []},
+            {"product_key": "CZCE.SF", "canonical": "硅铁", "aliases": ["硅铁"], "negative_contexts": []},
+        ]
+    )
+    text = "【硅锰/硅铁】周一，硅锰现货价格持平，硅铁现货价格小幅回落。"
+
+    signals = extract_signals(text, lexicon.find_matches(text))
+
+    assert any(item.product_key == "CZCE.SM" and item.phrase == "持平" for item in signals)
+    assert any(item.product_key == "CZCE.SF" and item.phrase == "回落" for item in signals)
+    assert all(not (item.product_key == "CZCE.SM" and item.phrase == "回落") for item in signals)
+    assert all(not (item.product_key == "CZCE.SF" and item.phrase == "持平") for item in signals)

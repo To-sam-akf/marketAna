@@ -11,7 +11,9 @@ from sqlalchemy.orm import Session
 
 from data_proccessing.pipeline import validate_canonical_result
 from back_end.app.core.status import ArticleProcessingStatus
-from back_end.app.models import AnalysisReviewQueue, Article
+from back_end.app.core.dates import valid_publish_time
+from back_end.app.core.review import clean_review_evidence
+from back_end.app.models import AnalysisResult, AnalysisReviewQueue, Article
 from back_end.app.repositories.articles import ArticleRepository
 
 
@@ -39,10 +41,11 @@ def ingest_canonical_result(
     if segment_rows:
         repo.save_product_segments(article.id, segment_rows)
     saved_results = repo.save_analysis_results(article.id, result_rows, mark_stored=False)
+    _reconcile_analysis_results(session, article.id, result_rows)
 
     review_rows = list(payload.get("review_queue") or [])
-    for item in review_rows:
-        _upsert_review_item(session, article.id, item)
+    active_review_keys = {_upsert_review_item(session, article.id, item) for item in review_rows}
+    _reconcile_pending_review_items(session, article.id, active_review_keys)
 
     repo.save_task_log(
         article_id=article.id,
@@ -112,7 +115,7 @@ def _segment_from_result(item: dict[str, Any], cleaned_text: str) -> dict[str, A
     }
 
 
-def _upsert_review_item(session: Session, article_id: int, item: dict[str, Any]) -> None:
+def _upsert_review_item(session: Session, article_id: int, item: dict[str, Any]) -> str:
     product_key = str(item.get("product_key") or "")
     reason = str(item.get("reason") or "unknown")
     fingerprint = hashlib.sha1(
@@ -130,18 +133,62 @@ def _upsert_review_item(session: Session, article_id: int, item: dict[str, Any])
     elif row.status in {"rejected", "resolved"}:
         # A human decision is terminal. Re-running the same pipeline item may
         # refresh neither its status nor its audit metadata.
-        return
+        return fingerprint
     row.product_key = product_key or None
     row.product = _optional_text(item.get("product"))
     row.reason = reason[:128]
-    row.evidence_json = item.get("evidence") if isinstance(item.get("evidence"), (dict, list)) else {"raw": item.get("evidence")}
+    row.evidence_json = clean_review_evidence(item.get("evidence"))
     row.status = "pending"
+    return fingerprint
+
+
+def _reconcile_pending_review_items(session: Session, article_id: int, active_keys: set[str]) -> None:
+    pending_rows = list(
+        session.scalars(
+            select(AnalysisReviewQueue).where(
+                AnalysisReviewQueue.article_id == article_id,
+                AnalysisReviewQueue.status == "pending",
+            )
+        ).all()
+    )
+    for row in pending_rows:
+        if row.item_key not in active_keys:
+            session.delete(row)
+
+
+def _reconcile_analysis_results(
+    session: Session,
+    article_id: int,
+    result_rows: list[dict[str, Any]],
+) -> None:
+    active_keys = {
+        (str(item.get("product_key") or ""), str(item.get("contract_key") or ""))
+        for item in result_rows
+    }
+    existing_rows = list(
+        session.scalars(select(AnalysisResult).where(AnalysisResult.article_id == article_id)).all()
+    )
+    for row in existing_rows:
+        if row.analysis_method == "manual":
+            continue
+        if (row.product_key, row.contract_key or "") not in active_keys:
+            session.delete(row)
 
 
 def _stats_message(payload: dict[str, Any]) -> str:
     stats = payload.get("processing_stats") or {}
     return "canonical import: " + ", ".join(
-        f"{key}={stats[key]}" for key in ("matched_products", "signal_count", "rule_results", "llm_results", "error_count") if key in stats
+        f"{key}={stats[key]}"
+        for key in (
+            "matched_products",
+            "signal_count",
+            "rule_results",
+            "llm_results",
+            "error_count",
+            "llm_retry_count",
+            "llm_recovered_count",
+        )
+        if key in stats
     )
 
 
@@ -154,7 +201,8 @@ def _parse_datetime(value: Any) -> datetime | None:
     if not value:
         return None
     parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    return parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
+    normalized = parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
+    return valid_publish_time(normalized)
 
 
 def _optional_text(value: Any) -> str | None:
