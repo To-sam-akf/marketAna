@@ -29,9 +29,8 @@ from back_end.app.core.database import Base, create_database_tables
 from back_end.app.core.exceptions import AppException
 from back_end.app.core.status import ArticleProcessingStatus
 from back_end.app.models import AnalysisResult, Article, ArticleProductSegment, TaskLog
-from back_end.app.repositories import ArticleRepository
-from pn05.product_segmenter import segment_article
-from pn11.models import BatchResult
+from back_end.app.repositories import ArticleRepository, ProductRepository
+from back_end.app.services.batch import BatchResult
 
 
 @pytest.fixture
@@ -1017,7 +1016,19 @@ def test_product_review_api_confirms_resolution_and_approves_alias(session_facto
     repository = ArticleRepository(session)
     article = repository.create_article(title="欧集线日报")
     repository.save_cleaned_text(article.id, "## 核心正文\n\n【欧集线】运价预期偏强。")
-    segment_article(article.id, session)
+    ProductRepository(session).sync_unknown_resolutions(
+        article.id,
+        [
+            {
+                "block_fingerprint": "eu-line-1",
+                "segment_index": 0,
+                "raw_name": "欧集线",
+                "excerpt": "欧集线运价预期偏强。",
+                "start_char": 15,
+                "end_char": 27,
+            }
+        ],
+    )
     session.commit()
 
     catalog = get_product_catalog()

@@ -26,7 +26,7 @@ class ProcessingConfig:
     review_threshold: float = 0.35
     rule_accept_threshold: float = 0.70
     llm_fallback_margin: float = 0.20
-    max_llm_snippets: int = 6
+    max_llm_snippets: int = 3
     max_llm_chars: int = 1200
     context_window: int = 80
     llm_timeout_seconds: int = 60
@@ -44,7 +44,7 @@ class ProcessingConfig:
             review_threshold=_float("DATA_REVIEW_THRESHOLD", 0.35),
             rule_accept_threshold=_float("DATA_RULE_ACCEPT_THRESHOLD", 0.70),
             llm_fallback_margin=_float("DATA_LLM_FALLBACK_MARGIN", 0.20),
-            max_llm_snippets=_int("DATA_MAX_LLM_SNIPPETS", 6),
+            max_llm_snippets=_int("DATA_MAX_LLM_SNIPPETS", 3),
             max_llm_chars=_int("DATA_MAX_LLM_CHARS", 1200),
             context_window=_int("DATA_CONTEXT_WINDOW", 80),
             llm_timeout_seconds=_int("DATA_LLM_TIMEOUT_SECONDS", _int("LLM_TIMEOUT_SECONDS", 60)),

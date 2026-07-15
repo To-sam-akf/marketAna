@@ -4,7 +4,7 @@ from back_end.app.api.schemas import datetime_to_iso
 from back_end.app.core.display import is_displayable_analysis_result
 from back_end.app.core.review import clean_review_evidence, trigger_reason_label
 from back_end.app.models import AnalysisResult, Article, ArticleProductSegment, ArticleText, ManualConfirmation, TaskLog
-from pn05.display_cleaner import clean_display_text
+from data_proccessing.cleaning import clean_display_text
 from data_proccessing.catalog import PRODUCT_CATALOG, ProductDefinition, get_product, product_group, product_key_for_name
 
 

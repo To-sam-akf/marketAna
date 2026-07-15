@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 from data_proccessing.config import ProcessingConfig
+from data_proccessing.cleaning import clean_text
 from data_proccessing.instrument_mapping.runtime import LexiconMatch, RuntimeLexicon
 from data_proccessing.llm.client import LLMCallResult, LLMClient, LLMRequestError
 from data_proccessing.llm.context import build_llm_context, build_llm_correction_context
@@ -54,6 +55,21 @@ def process_document(
 ) -> DocumentProcessingResult:
     config = config or ProcessingConfig()
     started = time.perf_counter()
+    if document.cleaned_text.strip():
+        cleaned_text = document.cleaned_text
+        cleaning_stats = {}
+    else:
+        cleaned_text, stats = clean_text(document.raw_text)
+        cleaning_stats = {
+            "noise_lines_removed": stats.noise_lines_removed,
+            "numeric_lines_removed": stats.numeric_lines_removed,
+            "disclaimer_blocks_removed": stats.disclaimer_lines_removed,
+        }
+    document = replace(
+        document,
+        cleaned_text=cleaned_text,
+        metadata={**document.metadata, "cleaning": cleaning_stats},
+    )
     matches = tuple(lexicon.find_matches(document.raw_text, title=document.title))
     sections = build_product_sections(document.raw_text, matches)
     signals = tuple(extract_signals(document.raw_text, matches, context_window=config.context_window))
@@ -409,6 +425,7 @@ def process_document(
         "llm_retry_count": llm_retry_count,
         "llm_recovered_count": llm_recovered_count,
         "llm_error_by_type": dict(sorted(llm_error_types.items())),
+        "cleaning": document.metadata.get("cleaning", {}),
         "review_count": len(review_queue),
         "duration_ms": elapsed_ms,
         "pipeline_version": config.pipeline_version,

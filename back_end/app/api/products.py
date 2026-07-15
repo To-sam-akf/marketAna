@@ -7,7 +7,7 @@ from back_end.app.core.display import formal_analysis_clause
 from back_end.app.core.responses import success_response
 from back_end.app.core.status import ArticleProcessingStatus
 from back_end.app.models import AnalysisResult, Article 
-from pn05.display_cleaner import clean_display_text
+from data_proccessing.cleaning import clean_display_text
 from data_proccessing.catalog import product_group
 
 router = APIRouter(prefix="/api/products", tags=["products"])

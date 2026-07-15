@@ -11,8 +11,7 @@ from back_end.app.core.exceptions import AppException, ErrorCode
 from back_end.app.core.status import ArticleProcessingStatus
 from back_end.app.models import AnalysisResult, ArticleProductSegment, ProductAlias, ProductResolution
 from back_end.app.repositories.base import BaseRepository
-from pn06.product_catalog import get_product
-from pn06.product_dict import ProductMatcher, normalize_alias
+from data_proccessing.catalog import ProductMatcher, get_product, normalize_alias
 
 
 class ProductRepository(BaseRepository):
